@@ -4,7 +4,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from common import configure_matplotlib_defaults, module_available, write_json
+from common import configure_matplotlib_defaults, friendly_chart_target_label, module_available, write_json
 
 
 def select_chart_plan(df, task: str, target: str | None = None, time_col: str | None = None, config: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -124,10 +124,22 @@ def save_basic_charts(df, output_dir: Path, task: str, target: str | None = None
 
     if target and target in df.columns:
         fig, ax = plt.subplots(figsize=(8, 5))
-        df[target].dropna().hist(ax=ax, bins=30)
-        ax.set_title(f"Distribution of {target}")
-        ax.set_xlabel(target)
-        ax.set_ylabel("Count")
+        target_label = friendly_chart_target_label(target)
+        target_series = df[target].dropna()
+        unique_values = sorted(target_series.unique().tolist()) if hasattr(target_series, "unique") else []
+        if set(unique_values).issubset({0, 1}) and len(unique_values) <= 2:
+            counts = target_series.astype(int).value_counts().sort_index()
+            x_positions = [0, 1]
+            y_values = [int(counts.get(0, 0)), int(counts.get(1, 0))]
+            ax.bar(x_positions, y_values, color=["#8FB9A8", "#D67C6D"])
+            ax.set_xticks(x_positions)
+            ax.set_xticklabels(["否", "是"])
+            ax.set_title(f"{target_label}分布")
+        else:
+            target_series.hist(ax=ax, bins=30)
+            ax.set_title(f"{target_label}分布")
+        ax.set_xlabel(target_label)
+        ax.set_ylabel("样本量")
         path = output_dir / "target_distribution.png"
         fig.tight_layout()
         fig.savefig(path, dpi=150)

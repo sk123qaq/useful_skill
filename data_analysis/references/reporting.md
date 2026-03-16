@@ -45,17 +45,17 @@ Use this workflow when the user asks for a formal report deliverable instead of,
 
 1. Finish the normal analysis run and keep all JSON / PNG / Markdown artifacts in the run directory.
 2. Read `references/report-artifact-interpretation-zh.md` so the narrative uses the same metric meanings and chart-reading rules as the skill.
-3. If the user wants an editable Chinese report, use the `docx` skill with `templates/analysis-report-docx-template.md`.
-4. If the user wants a fixed-layout Chinese report, use the `pdf` skill with `templates/analysis-report-pdf-template.md`.
-5. If a quick local export is acceptable, `python3 scripts/formal_report_export.py --run-dir <run_dir>` can generate both artifacts directly from the existing run outputs and write `formal_report_validation.json`.
-   The validation file now checks not only file existence, but also paragraph/text extraction, embedded images, stale-output risk, Markdown leakage, and obvious raw technical identifiers.
-6. If the analysis itself is being launched from scratch, prefer `python3 scripts/run_pipeline.py ... --formal-report --report-title "..."` so the run ends with dashboard, DOCX, PDF, and validation artifacts in one pass.
-7. In both DOCX and PDF outputs, require:
+3. Run `python3 scripts/formal_report_export.py --run-dir <run_dir>` to generate the first-draft DOCX / PDF, plus `formal_report_draft.md`, `report_context.json`, and `formal_report_validation.json`.
+4. Ask the agent to read `report_context.json` and the PNG charts, then write a structured `chart_review.json` with one object per chart plus an `overall_summary`.
+5. Re-run `python3 scripts/formal_report_export.py --run-dir <run_dir> --chart-review-json <path>` so the script deterministically fills the reviewed chart text back into the fixed layout.
+6. If the analysis itself is being launched from scratch, prefer `python3 scripts/run_pipeline.py ... --formal-report --report-title "..."` for the first-draft export, then do the `chart_review.json` handoff as a second pass.
+7. The validation file checks not only file existence, but also paragraph/text extraction, embedded images, stale-output risk, Markdown leakage, and obvious raw technical identifiers.
+8. In both DOCX and PDF outputs, require:
    - short plain-language explanations for technical terms
    - explicit guidance on whether each key metric looks good, weak, or inconclusive
-   - captions under each major chart explaining how to read it and what the chart means in this run
-8. After export, read the generated DOCX or PDF again and do a quality pass. Check for raw feature ids, raw model ids, literal Markdown syntax, fragmented bullets, stale old content, and unexplained metrics. Revise and re-export if needed.
-9. Prefer the dashboard as a review layer, but build the formal report from the raw artifacts rather than copying dashboard text blindly.
+   - per-chart natural-language interpretation, implication, and Chinese caption note populated from `chart_review.json`
+9. After export, read the generated DOCX or PDF again and do a quality pass. Check for raw feature ids, raw model ids, literal Markdown syntax, fragmented bullets, stale old content, and unexplained metrics. Revise and re-export if needed.
+10. Prefer the dashboard as a review layer, but build the formal report from the raw artifacts rather than copying dashboard text blindly.
 
 ## Public Dataset Adapters
 

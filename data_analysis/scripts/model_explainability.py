@@ -9,9 +9,23 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
-from common import ensure_output_dir, parse_json_arg, write_json
+from common import configure_matplotlib_defaults, ensure_output_dir, friendly_chart_feature_label, parse_json_arg, write_json
 from io_router import load_dataframe
 from model_runner import fit_selected_model
+
+
+def _configure_chinese_font():
+    preferred_fonts = [
+        "Noto Sans CJK SC",
+        "Source Han Sans SC",
+        "PingFang SC",
+        "Hiragino Sans GB",
+        "Songti SC",
+        "Microsoft YaHei",
+        "SimHei",
+        "Arial Unicode MS",
+    ]
+    return configure_matplotlib_defaults(preferred_fonts)
 
 
 def native_feature_importance(model, feature_names: list[str], top_n: int = 15) -> list[dict[str, Any]]:
@@ -82,7 +96,9 @@ def shap_feature_importance(model, X_sample, output_dir: Path, top_n: int = 15) 
         import matplotlib.pyplot as plt  # type: ignore
         import shap  # type: ignore
 
+        _configure_chinese_font()
         X_numeric = _coerce_numeric_matrix(X_sample)
+        display_feature_names = [friendly_chart_feature_label(column) for column in X_numeric.columns]
         explainer = shap.TreeExplainer(model)
         values = explainer.shap_values(X_numeric)
         if isinstance(values, list):
@@ -94,7 +110,17 @@ def shap_feature_importance(model, X_sample, output_dir: Path, top_n: int = 15) 
         mean_abs = np.mean(np.abs(values), axis=0)
         ranking = sorted(zip(X_numeric.columns.tolist(), mean_abs.tolist()), key=lambda item: item[1], reverse=True)
 
-        shap.summary_plot(values, X_numeric, plot_type="bar", max_display=min(top_n, len(X_numeric.columns)), show=False)
+        shap.summary_plot(
+            values,
+            X_numeric.to_numpy(),
+            feature_names=display_feature_names,
+            plot_type="bar",
+            max_display=min(top_n, len(X_numeric.columns)),
+            show=False,
+        )
+        ax = plt.gca()
+        ax.set_title("SHAP 特征重要性", fontsize=13)
+        ax.set_xlabel("平均 |SHAP| 影响强度")
         bar_path = output_dir / "shap_bar.png"
         plt.tight_layout()
         plt.savefig(bar_path, dpi=150, bbox_inches="tight")
@@ -113,12 +139,21 @@ def save_partial_dependence_plots(model, X_train, features: list[str], output_di
     from sklearn.inspection import PartialDependenceDisplay
     import matplotlib.pyplot as plt  # type: ignore
 
+    _configure_chinese_font()
     artifacts = []
     X_numeric = _coerce_numeric_matrix(X_train)
     for feature in features:
         fig, ax = plt.subplots(figsize=(7, 5))
-        PartialDependenceDisplay.from_estimator(model, X_numeric, [feature], ax=ax)
-        ax.set_title(f"Partial dependence: {feature}")
+        display = PartialDependenceDisplay.from_estimator(model, X_numeric, [feature], ax=ax)
+        plot_ax = display.axes_[0, 0] if getattr(display, "axes_", None) is not None else ax
+        display_label = friendly_chart_feature_label(feature)
+        plot_ax.set_title(f"{display_label}部分依赖图")
+        plot_ax.set_xlabel(display_label)
+        plot_ax.set_ylabel("模型预测变化")
+        unique_values = sorted(X_numeric[feature].dropna().unique().tolist())
+        if set(unique_values).issubset({0.0, 1.0}) and len(unique_values) <= 2:
+            plot_ax.set_xticks([0, 1])
+            plot_ax.set_xticklabels(["否", "是"])
         path = output_dir / f"pdp_{feature}.png"
         fig.tight_layout()
         fig.savefig(path, dpi=150)

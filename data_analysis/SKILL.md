@@ -67,6 +67,21 @@ python3 scripts/run_pipeline.py --help
     然后根据交付物选择 [templates/analysis-report-docx-template.md](templates/analysis-report-docx-template.md) 或 [templates/analysis-report-pdf-template.md](templates/analysis-report-pdf-template.md)。  
     若要一键在分析完成后同时产出 HTML + DOCX + PDF，可直接运行：  
     `python3 scripts/run_pipeline.py ... --formal-report --report-title "..."`
+    
+    正式报告里的图表解读必须做二次视觉复核，不能停留在脚本导出的首稿：
+    - 第一步：先运行 `python3 scripts/formal_report_export.py --run-dir <run_dir>` 生成排版稳定的首稿 DOCX / PDF，以及 `formal_report_draft.md` 和 `report_context.json`。
+    - 第二步：由 agent 读取 `report_context.json`、首稿报告和对应 PNG；如果 DOCX/PDF 中图片不方便直接读取，就回到 run 目录读取对应 PNG。
+    - 第三步：agent 必须结合前文已经写好的执行摘要、数据质量、核心指标、方法说明、业务解释，一张图一张图地写“详细图表解读”，并输出结构化 `chart_review.json`。
+    - `chart_review.json` 的 `charts` 数组长度必须与最终纳入报告的图表数量一致；4 张图就写 4 段，5 张图就写 5 段。
+    - 每个图对象至少包含 `file`、`title`、`interpretation`、`implication`、`caption_note`；另写一个 `overall_summary` 串起全部图表。
+    - 每张图至少回答三个问题：这张图现在展示了什么、当前情况说明了什么、这背后可能意味着什么。
+    - 图表解读必须面向分析基础较弱的读者：少用黑话，第一次出现的术语要顺手解释，不要假设读者知道 SHAP、PDP、lift、p_value 等词。
+    - 图表解读要写成可直接放进正式报告的段落，不要写成“这张图围绕……展开”“帮助读者理解……”这类说明书式句子。
+    - 图表解读区不要再写“怎么看”或“本图结论”这类模板化小标题，改成自然语言段落。
+    - 如果图里出现英文指标、英文图例、英文坐标、缩写，或者中文专业名词对基础读者有理解门槛，要在图下注释补一行简短解释，例如“Accuracy（准确率）”“轮廓系数（衡量聚类是否分得清楚的指标）”。
+    - 在所有单图解读之后，再补一段“图表总体解读”，用一段完整中文把几张图串起来，说明整体情况和背后意义。
+    - 回填时不要直接改 DOCX / PDF 版式；应把 `chart_review.json` 作为参数传回 `python3 scripts/formal_report_export.py --run-dir <run_dir> --chart-review-json <path>`，由脚本把文字放回正式报告对应位置。
+    - 如果脚本首稿里的图表说明仍是泛化句、占位句、或“怎么看 / 本图结论”结构，agent 必须重写后再交付。
 
 11. 本地数据不足时，再启用外部研究。  
     使用 [references/web-research-rules.md](references/web-research-rules.md) 与 `scripts/source_research_adapter.py`。  
@@ -91,6 +106,7 @@ python3 scripts/run_pipeline.py --help
 - 正式报告里必须解释术语，并说明关键指标怎么读，不能裸扔 `accuracy`、`F1`、`p_value`、`RMSE`、`R2` 等数值。
 - DOCX / PDF 报告应以原始 JSON / PNG / Markdown 产物为真源，Dashboard 只是复核层。
 - 正式报告里要把技术标识转成业务可读中文，比如优先写“糖尿病状态”，而不是 `diabetes_status_no`。
+- 正式报告里的图表解读必须经过一次基于图片本身的复写；只根据文件名、脚本默认说明或图表类型猜测，不足以直接交付。
 - 正式报告导出应采用临时文件 + 原子替换，避免重复导出时残留旧内容。
 
 ## 核心脚本

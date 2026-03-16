@@ -6,7 +6,7 @@ import json
 import math
 import re
 import subprocess
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 from typing import Any
 from xml.sax.saxutils import escape
@@ -14,7 +14,7 @@ from xml.sax.saxutils import escape
 from docx import Document
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.oxml.ns import qn
-from docx.shared import Inches, Pt
+from docx.shared import Cm, Inches, Pt
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
@@ -22,15 +22,16 @@ from reportlab.lib.units import cm
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.cidfonts import UnicodeCIDFont
 from reportlab.pdfbase.ttfonts import TTFont
-from reportlab.platypus import Image, PageBreak, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+from reportlab.platypus import Image, KeepTogether, PageBreak, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
-from common import command_available, detect_cjk_font, detect_cjk_font_path, module_available, write_json
+from common import command_available, detect_cjk_font, detect_cjk_font_path, module_available, write_json, write_markdown
 
 
 KNOWN_JSON = [
     "environment.json",
     "read_plan.json",
     "chart_plan.json",
+    "chart_review.json",
     "cleaning_report.json",
     "stats_report.json",
     "feature_plan.json",
@@ -96,8 +97,11 @@ CAUSAL_ESTIMATE_LABELS = {
 }
 
 DOCX_FONT_NAME = detect_cjk_font(
-    ["PingFang SC", "Hiragino Sans GB", "Songti SC", "Microsoft YaHei", "SimHei", "Arial Unicode MS"]
+    ["Songti SC", "STSong", "Songti TC", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "SimHei", "Arial Unicode MS"]
 ) or "Arial Unicode MS"
+DOCX_HEADING_FONT_NAME = detect_cjk_font(
+    ["PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "SimHei", "Songti SC", "Arial Unicode MS"]
+) or DOCX_FONT_NAME
 PDF_FONT_NAME = "DataAnalysisCJK"
 PDF_FONT_FALLBACK = "STSong-Light"
 
@@ -338,6 +342,51 @@ IMAGE_ORDER = [
     "pdp_age_group_80.png",
 ]
 
+MAX_FORMAL_REPORT_CHARTS = 4
+CHART_KIND_LABELS = {
+    "line": "趋势图",
+    "scatter": "散点图",
+    "bar": "柱状对比图",
+    "heatmap": "热力图",
+    "histogram": "分布图",
+    "box": "箱线图",
+}
+TECHNICAL_TERM_LABELS = {
+    "accuracy": "Accuracy（准确率）",
+    "precision": "Precision（查准率）",
+    "recall": "Recall（召回率）",
+    "f1": "F1（综合平衡查准率与召回率的指标）",
+    "rmse": "RMSE（均方根误差）",
+    "mae": "MAE（平均绝对误差）",
+    "r2": "R2（拟合优度）",
+    "shap": "SHAP（模型解释中衡量变量影响强弱的方法）",
+    "pdp": "PDP（部分依赖图，用来观察变量变化和预测结果的关系）",
+    "incomegroup": "Income Group（收入分组）",
+    "gdp": "GDP（国内生产总值）",
+    "life expectancy": "Life expectancy（预期寿命）",
+    "internet": "Internet（互联网）",
+    "electricity": "Electricity access（电力可及率）",
+    "轮廓系数": "轮廓系数（衡量聚类结果是否分得清楚、组内是否紧密的指标）",
+    "双重差分": "双重差分（比较处理组和对照组在干预前后变化差异的方法）",
+    "断点回归": "断点回归（利用阈值附近样本识别局部处理效应的方法）",
+    "工具变量": "工具变量（用外生变量帮助识别因果效应的方法）",
+    "倾向得分匹配": "倾向得分匹配（先匹配相似样本，再比较处理效应的方法）",
+    "置信区间": "置信区间（反映估计结果可能落入范围的区间）",
+    "相关系数": "相关系数（衡量两个变量同向或反向变化强弱的指标）",
+    "部分依赖图": "部分依赖图（观察某个变量变化时模型预测如何变化的图）",
+    "特征重要性": "特征重要性（表示模型在判断时更依赖哪些变量的结果）",
+    "显著性": "显著性（说明结果不太像随机波动造成的统计证据强弱）",
+}
+CHART_REVIEW_META_PHRASES = [
+    "这张图围绕",
+    "帮助读者",
+    "帮助基础读者",
+    "用于说明",
+    "用来补充说明",
+    "当前分布、差异或关系",
+    "不能只当成单一数字来理解",
+]
+
 
 def _load_json(path: Path) -> dict[str, Any] | None:
     if not path.exists():
@@ -392,6 +441,8 @@ def _normalize_report_text(text: str | None) -> str:
         normalized = normalized.replace(source, target)
     normalized = normalized.replace("PDP", "PDP")
     normalized = re.sub(r"\s+", " ", normalized)
+    normalized = re.sub(r"(?<=[\u4e00-\u9fff])\s+(?=[A-Za-z0-9])", "", normalized)
+    normalized = re.sub(r"(?<=[A-Za-z0-9])\s+(?=[\u4e00-\u9fff])", "", normalized)
     return normalized.strip()
 
 
@@ -1209,8 +1260,328 @@ def _chart_blocks(context: dict[str, Any]) -> list[dict[str, Any]]:
         title = plan_meta.get("title") or meta.get("title") or path.stem.replace("_", " ")
         how_to_read = plan_meta.get("how_to_read") or meta.get("how_to_read") or "先看整体结构，再结合对应 JSON 指标理解。"
         meaning = plan_meta.get("meaning") or plan_meta.get("reason") or meta.get("meaning") or "这张图用于补充展示本次分析结果。"
-        blocks.append({"path": path, "title": title, "how_to_read": how_to_read, "meaning": meaning})
+        blocks.append(
+            {
+                "path": path,
+                "title": title,
+                "chart_type": plan_meta.get("chart") or meta.get("chart") or "chart",
+                "how_to_read": how_to_read,
+                "meaning": meaning,
+            }
+        )
     return blocks
+
+
+def _ensure_sentence(text: str | None) -> str:
+    cleaned = _normalize_report_text(text)
+    if not cleaned:
+        return ""
+    if cleaned.endswith(("。", "！", "？")):
+        return cleaned
+    return f"{cleaned}。"
+
+
+def _chart_kind_label(chart_type: str | None) -> str:
+    if not chart_type:
+        return "图表"
+    return CHART_KIND_LABELS.get(chart_type, "图表")
+
+
+def _technical_chart_note_hint(block: dict[str, Any]) -> str:
+    haystack = " ".join(
+        [
+            str(block.get("title", "")),
+            str(block.get("how_to_read", "")),
+            str(block.get("meaning", "")),
+            str(block.get("path", "")),
+        ]
+    ).lower()
+    matches = [label for term, label in TECHNICAL_TERM_LABELS.items() if term.lower() in haystack]
+    deduped = list(dict.fromkeys(matches))
+    if not deduped:
+        return ""
+    if len(deduped) == 1:
+        return deduped[0]
+    return "；".join(deduped[:3])
+
+
+def _draft_chart_interpretation(block: dict[str, Any]) -> str:
+    kind = _chart_kind_label(str(block.get("chart_type")))
+    intro = {
+        "趋势图": f"这张{kind}展示了“{block['title']}”相关结果，适合帮助读者把时间变化看得更直观。",
+        "散点图": f"这张{kind}展示了“{block['title']}”相关结果，适合帮助读者观察变量之间是否存在共同变化方向。",
+        "柱状对比图": f"这张{kind}展示了“{block['title']}”相关结果，适合帮助读者直接比较不同对象或不同指标之间的差异。",
+        "热力图": f"这张{kind}展示了“{block['title']}”相关结果，适合帮助读者同时比较多个群组在多个维度上的相对高低。",
+    }.get(kind, f"这张图展示了“{block['title']}”相关结果，用来补充说明本次分析中的关键发现。")
+    return _ensure_sentence(intro)
+
+
+def _draft_chart_implication(block: dict[str, Any]) -> str:
+    return _ensure_sentence(block.get("meaning") or "这张图用于补充说明本次分析结果。")
+
+
+def _draft_chart_review(chart_blocks: list[dict[str, Any]]) -> dict[str, Any]:
+    charts = [
+        {
+            "index": index + 1,
+            "file": block["path"].name,
+            "title": block["title"],
+            "interpretation": _draft_chart_interpretation(block),
+            "implication": _draft_chart_implication(block),
+            "caption_note": _technical_chart_note_hint(block),
+        }
+        for index, block in enumerate(chart_blocks)
+    ]
+    return {
+        "generated_at": datetime.now().isoformat(timespec="seconds"),
+        "status": "draft",
+        "source": "deterministic-draft",
+        "overall_summary": "以上图表分别从分布、差异、关系或分群结构等角度补充说明本次分析中的关键结果。" if chart_blocks else "",
+        "charts": charts,
+    }
+
+
+def _build_formal_report_draft_markdown(context: dict[str, Any], title: str, draft_review: dict[str, Any]) -> str:
+    lines = [
+        f"# {title}",
+        "",
+        "## 执行摘要",
+        _executive_conclusion(context),
+        "",
+        "## 关键发现",
+    ]
+    lines.extend([f"- {item}" for item in _key_findings(context)])
+    lines.extend(
+        [
+            "",
+            "## 分析背景与方法",
+            _method_summary(context),
+            "",
+            "## 业务解释",
+        ]
+    )
+    lines.extend([f"- {item}" for item in _plain_section_rows(context, "业务/公共卫生解释", limit=6) or _recommendations(context)])
+    lines.extend(["", "## 风险提示"])
+    lines.extend([f"- {item}" for item in _risk_items(context)])
+    lines.extend(["", "## 图表章节首稿"])
+    for item in draft_review.get("charts", []):
+        lines.extend(
+            [
+                f"### 图 {item.get('index', '?')}：{item.get('title', item.get('file', '图表'))}",
+                f"- 文件名：{item.get('file', 'N/A')}",
+                f"- 首稿解释：{item.get('interpretation', '')}",
+                f"- 首稿含义：{item.get('implication', '')}",
+            ]
+        )
+        if item.get("caption_note"):
+            lines.append(f"- 注释：{item['caption_note']}")
+    return "\n".join(lines).strip() + "\n"
+
+
+def _report_context_payload(context: dict[str, Any], title: str, draft_review: dict[str, Any], chart_blocks: list[dict[str, Any]]) -> dict[str, Any]:
+    draft_by_file = {str(item.get("file")): item for item in draft_review.get("charts", []) if isinstance(item, dict) and item.get("file")}
+    chart_manifest: list[dict[str, Any]] = []
+    for index, block in enumerate(chart_blocks, start=1):
+        draft_item = draft_by_file.get(block["path"].name, {})
+        chart_manifest.append(
+            {
+                "index": index,
+                "file": block["path"].name,
+                "title": block["title"],
+                "chart_type": _chart_kind_label(str(block.get("chart_type"))),
+                "draft_interpretation": draft_item.get("interpretation", ""),
+                "draft_implication": draft_item.get("implication", ""),
+                "caption_note_hint": draft_item.get("caption_note", ""),
+                "chart_plan_hint": block.get("meaning", ""),
+            }
+        )
+    return {
+        "generated_at": datetime.now().isoformat(timespec="seconds"),
+        "report_title": title,
+        "task": _friendly_task_label(context.get("task")),
+        "executive_conclusion": _executive_conclusion(context),
+        "key_findings": _key_findings(context),
+        "recommendations": _recommendations(context),
+        "risk_items": _risk_items(context),
+        "method_summary": _method_summary(context),
+        "analysis_scope": _plain_section_rows(context, "分析范围", limit=6),
+        "model_lines": _plain_section_rows(context, "模型结果", limit=6),
+        "explain_lines": _plain_section_rows(context, "可解释性结论", limit=6),
+        "business_lines": _plain_section_rows(context, "业务/公共卫生解释", limit=6),
+        "source_and_scope_rows": _source_and_scope_rows(context),
+        "data_quality_rows": _data_quality_rows(context),
+        "metric_commentary_rows": _metric_commentary(context),
+        "chart_manifest": chart_manifest,
+        "chart_review_writing_rules": [
+            "把每张图写成可直接贴入正式报告的两段中文，不要写成图表说明书或提示语。",
+            "第一段直接说明图中当前出现了什么情况，尽量点出具体对象、方向、高低差异或数值背景。",
+            "第二段说明这背后意味着什么，以及为什么值得管理层、业务方或研究读者关注。",
+            "避免套话，例如“这张图围绕……展开”“帮助读者理解”“用于说明本次分析”等。",
+            "不要写“怎么看”“本图结论”之类小标题，也不要复述文件名。",
+            "如果图中有英文指标、缩写，或中文专业名词对基础读者有理解门槛，再补充注释；没有就留空字符串。",
+        ],
+        "expected_chart_review_schema": {
+            "charts": [
+                {
+                    "file": "target_distribution.png",
+                    "title": "目标分布图",
+                    "interpretation": "图中可以看到，本次样本中的目标事件并不是平均分布，而是明显存在高低之分，这会直接影响后续模型分数的理解方式。",
+                    "implication": "这意味着后面读模型表现时，不能只看表面准确率，还要结合基线和类别分布一起判断模型是否真的识别出了高风险对象。",
+                    "caption_note": "如有英文指标、缩写或中文专业名词需要解释，则写简短注释；没有就留空字符串。",
+                }
+            ],
+            "overall_summary": "用一段正式报告口吻的中文，把所有关键图表串起来，说明整体情况和背后意义。",
+        },
+    }
+
+
+def _load_chart_review(path: Path) -> dict[str, Any] | None:
+    if not path.exists():
+        return None
+    payload = _load_json(path)
+    return payload if isinstance(payload, dict) else None
+
+
+def _normalize_chart_review(chart_blocks: list[dict[str, Any]], review: dict[str, Any] | None, draft_review: dict[str, Any]) -> dict[str, Any]:
+    candidate_rows = review.get("charts") if isinstance(review, dict) else None
+    review_by_file: dict[str, dict[str, Any]] = {}
+    review_by_index: dict[int, dict[str, Any]] = {}
+    if isinstance(candidate_rows, list):
+        for item in candidate_rows:
+            if not isinstance(item, dict):
+                continue
+            if item.get("file"):
+                review_by_file[str(item["file"])] = item
+            if item.get("index"):
+                try:
+                    review_by_index[int(item["index"])] = item
+                except (TypeError, ValueError):
+                    continue
+
+    draft_by_file = {item["file"]: item for item in draft_review.get("charts", [])}
+    normalized_charts: list[dict[str, Any]] = []
+    for index, block in enumerate(chart_blocks, start=1):
+        draft_item = draft_by_file.get(block["path"].name, {})
+        item = review_by_file.get(block["path"].name) or review_by_index.get(index) or {}
+        normalized_charts.append(
+            {
+                "index": index,
+                "file": block["path"].name,
+                "title": block["title"],
+                "interpretation": _ensure_sentence(item.get("interpretation") or draft_item.get("interpretation")),
+                "implication": _ensure_sentence(item.get("implication") or draft_item.get("implication")),
+                "caption_note": _ensure_sentence(item.get("caption_note") or draft_item.get("caption_note")).rstrip("。"),
+            }
+        )
+
+    overall_summary = _ensure_sentence((review or {}).get("overall_summary") or draft_review.get("overall_summary"))
+    normalized = {
+        "generated_at": datetime.now().isoformat(timespec="seconds"),
+        "status": "provided" if review else draft_review.get("status", "draft"),
+        "source": "chart-review-json" if review else draft_review.get("source", "deterministic-draft"),
+        "overall_summary": overall_summary,
+        "charts": normalized_charts,
+    }
+    if not normalized["overall_summary"]:
+        normalized["overall_summary"] = "这些图表共同说明，当前对象之间存在明显结构差异，解读时应把多个指标放在一起看。"
+    return normalized
+
+
+def _chart_review_markdown(review: dict[str, Any]) -> str:
+    lines = [
+        "# 图表解读回填结果",
+        "",
+        f"- 生成时间：{review.get('generated_at', 'N/A')}",
+        f"- 来源：{review.get('source', 'N/A')}",
+        f"- 状态：{review.get('status', 'N/A')}",
+    ]
+    lines.extend(["", "## 逐图解读"])
+    for item in review.get("charts", []):
+        lines.extend(
+            [
+                "",
+                f"### 图 {item.get('index', '?')}：{item.get('title', item.get('file', '图表'))}",
+                item.get("interpretation", ""),
+                "",
+                item.get("implication", ""),
+            ]
+        )
+        if item.get("caption_note"):
+            lines.extend(["", f"注释：{item['caption_note']}"])
+    lines.extend(["", "## 图表总体解读", review.get("overall_summary", "")])
+    return "\n".join(lines).strip() + "\n"
+
+
+def _lint_chart_review_content(review: dict[str, Any]) -> list[str]:
+    warnings: list[str] = []
+    if not review or review.get("status") != "provided":
+        return warnings
+    for item in review.get("charts", []):
+        if not isinstance(item, dict):
+            continue
+        title = item.get("title") or item.get("file") or "图表"
+        interpretation = _normalize_report_text(item.get("interpretation") or "")
+        implication = _normalize_report_text(item.get("implication") or "")
+        combined = f"{interpretation}\n{implication}"
+        hit = next((phrase for phrase in CHART_REVIEW_META_PHRASES if phrase in combined), None)
+        if hit:
+            warnings.append(f"chart_review 中“{title}”仍包含偏说明书式表达，例如“{hit}”。")
+        if len(interpretation) < 28:
+            warnings.append(f"chart_review 中“{title}”的 interpretation 过短，像占位句。")
+        if len(implication) < 28:
+            warnings.append(f"chart_review 中“{title}”的 implication 过短，像占位句。")
+    overall_summary = _normalize_report_text(review.get("overall_summary") or "")
+    if overall_summary and any(phrase in overall_summary for phrase in ["这组图", "这些图表放在一起看"]):
+        pass
+    elif overall_summary and len(overall_summary) < 40:
+        warnings.append("chart_review 的 overall_summary 过短，难以承担总体解读作用。")
+    return warnings
+
+
+def _chart_blocks_with_review(context: dict[str, Any]) -> tuple[list[dict[str, Any]], str]:
+    base_blocks = _chart_blocks(context)[:MAX_FORMAL_REPORT_CHARTS]
+    review = context.get("chart_review") or {}
+    review_by_file = {
+        str(item.get("file")): item for item in review.get("charts", []) if isinstance(item, dict) and item.get("file")
+    }
+    rendered_blocks: list[dict[str, Any]] = []
+    for block in base_blocks:
+        item = review_by_file.get(block["path"].name, {})
+        rendered_blocks.append(
+            {
+                **block,
+                "interpretation": _ensure_sentence(item.get("interpretation") or block.get("meaning")),
+                "implication": _ensure_sentence(item.get("implication") or block.get("meaning")),
+                "caption_note": _normalize_report_text(item.get("caption_note") or ""),
+            }
+        )
+    return rendered_blocks, _ensure_sentence(review.get("overall_summary"))
+
+
+def _prepare_report_context(run_dir: Path, context: dict[str, Any], title: str) -> dict[str, Any]:
+    chart_blocks = _chart_blocks(context)[:MAX_FORMAL_REPORT_CHARTS]
+    draft_path = run_dir / "formal_report_draft.md"
+    context_path = run_dir / "report_context.json"
+    draft_review = _draft_chart_review(chart_blocks)
+    draft_markdown = _build_formal_report_draft_markdown(context, title, draft_review)
+    write_markdown(draft_path, draft_markdown)
+    write_json(context_path, _report_context_payload(context, title, draft_review, chart_blocks))
+    context["json_files"] = sorted(run_dir.glob("*.json"))
+    context["markdown_files"] = sorted(run_dir.glob("*.md"))
+    return draft_review
+
+
+def _resolve_chart_review(run_dir: Path, explicit_path: Path | None) -> tuple[dict[str, Any] | None, Path | None]:
+    if explicit_path is not None:
+        if not explicit_path.exists():
+            raise FileNotFoundError(f"chart review JSON not found: {explicit_path}")
+        payload = _load_chart_review(explicit_path)
+        if payload is None:
+            raise ValueError(f"chart review JSON is empty or invalid: {explicit_path}")
+        return payload, explicit_path if payload is not None else None
+    default_path = run_dir / "chart_review.json"
+    payload = _load_chart_review(default_path)
+    return payload, default_path if payload is not None else None
 
 
 def _glossary_rows(context: dict[str, Any]) -> list[list[str]]:
@@ -1270,21 +1641,39 @@ def _set_run_font(run, font_name: str = DOCX_FONT_NAME, size: float | None = Non
 
 def _add_heading(doc: Document, text: str, level: int) -> None:
     paragraph = doc.add_heading("", level=level)
+    paragraph.alignment = WD_ALIGN_PARAGRAPH.LEFT
+    paragraph.paragraph_format.space_before = Pt(14 if level == 1 else 9)
+    paragraph.paragraph_format.space_after = Pt(6 if level == 1 else 4)
     run = paragraph.add_run(text)
-    _set_run_font(run, size=18 - level * 2 if level < 4 else 11, bold=True)
+    _set_run_font(run, font_name=DOCX_HEADING_FONT_NAME, size=16 if level == 1 else 13 if level == 2 else 11.5, bold=True)
 
-
-def _add_paragraph(doc: Document, text: str, size: float = 11, bold: bool = False, align: int | None = None) -> None:
+def _add_paragraph(
+    doc: Document,
+    text: str,
+    size: float = 11.5,
+    bold: bool = False,
+    align: int | None = None,
+    first_line_indent: bool = True,
+    line_spacing: float = 1.45,
+    space_after: float = 5.0,
+    font_name: str = DOCX_FONT_NAME,
+) -> None:
     paragraph = doc.add_paragraph()
-    if align is not None:
-        paragraph.alignment = align
+    paragraph.alignment = align if align is not None else WD_ALIGN_PARAGRAPH.JUSTIFY
+    paragraph.paragraph_format.line_spacing = line_spacing
+    paragraph.paragraph_format.space_after = Pt(space_after)
+    paragraph.paragraph_format.space_before = Pt(0)
+    paragraph.paragraph_format.first_line_indent = Pt(size * 2) if first_line_indent else Pt(0)
     run = paragraph.add_run(_normalize_report_text(text))
-    _set_run_font(run, size=size, bold=bold)
+    _set_run_font(run, font_name=font_name, size=size, bold=bold)
 
 
 def _add_bullets(doc: Document, items: list[str]) -> None:
     for item in items:
         paragraph = doc.add_paragraph(style="List Bullet")
+        paragraph.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
+        paragraph.paragraph_format.line_spacing = 1.3
+        paragraph.paragraph_format.space_after = Pt(3)
         run = paragraph.add_run(_normalize_report_text(item))
         _set_run_font(run)
 
@@ -1299,21 +1688,39 @@ def _add_table(doc: Document, rows: list[list[str]]) -> None:
             cell = table.cell(r_index, c_index)
             cell.text = str(value)
             for paragraph in cell.paragraphs:
+                paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER if r_index == 0 else WD_ALIGN_PARAGRAPH.JUSTIFY
+                paragraph.paragraph_format.line_spacing = 1.2
+                paragraph.paragraph_format.space_after = Pt(1)
+                paragraph.paragraph_format.first_line_indent = Pt(0)
                 for run in paragraph.runs:
                     _set_run_font(run, size=10.2, bold=(r_index == 0))
 
 
-def _render_docx(run_dir: Path, output_path: Path, context: dict[str, Any], title: str) -> None:
+def _render_docx(
+    run_dir: Path,
+    output_path: Path,
+    context: dict[str, Any],
+    title: str,
+    chart_blocks: list[dict[str, Any]],
+    chart_overall_summary: str,
+) -> None:
     doc = Document()
+    section = doc.sections[0]
+    section.page_width = Cm(21)
+    section.page_height = Cm(29.7)
+    section.top_margin = Cm(2.54)
+    section.bottom_margin = Cm(2.54)
+    section.left_margin = Cm(2.8)
+    section.right_margin = Cm(2.4)
     normal_style = doc.styles["Normal"]
     normal_style.font.name = DOCX_FONT_NAME
     normal_style._element.rPr.rFonts.set(qn("w:eastAsia"), DOCX_FONT_NAME)
-    normal_style.font.size = Pt(11)
+    normal_style.font.size = Pt(11.5)
 
-    _add_paragraph(doc, title, size=20, bold=True, align=WD_ALIGN_PARAGRAPH.CENTER)
-    _add_paragraph(doc, "正式中文分析报告", size=13, align=WD_ALIGN_PARAGRAPH.CENTER)
-    _add_paragraph(doc, f"报告类型：{_friendly_task_label(context.get('task'))}", size=11, align=WD_ALIGN_PARAGRAPH.CENTER)
-    _add_paragraph(doc, f"生成日期：{date.today()}", size=10.5, align=WD_ALIGN_PARAGRAPH.CENTER)
+    _add_paragraph(doc, title, size=20.5, bold=True, align=WD_ALIGN_PARAGRAPH.CENTER, first_line_indent=False, line_spacing=1.1, space_after=7, font_name=DOCX_HEADING_FONT_NAME)
+    _add_paragraph(doc, "正式中文分析报告", size=12.5, align=WD_ALIGN_PARAGRAPH.CENTER, first_line_indent=False, line_spacing=1.15, space_after=3)
+    _add_paragraph(doc, f"报告类型：{_friendly_task_label(context.get('task'))}", size=10.8, align=WD_ALIGN_PARAGRAPH.CENTER, first_line_indent=False, line_spacing=1.1, space_after=1)
+    _add_paragraph(doc, f"生成日期：{date.today()}", size=10.2, align=WD_ALIGN_PARAGRAPH.CENTER, first_line_indent=False, line_spacing=1.1, space_after=8)
     doc.add_paragraph("")
 
     _add_heading(doc, "一、执行摘要", 1)
@@ -1351,25 +1758,17 @@ def _render_docx(run_dir: Path, output_path: Path, context: dict[str, Any], titl
         _add_bullets(doc, explain_lines)
 
     _add_heading(doc, "五、图表解读", 1)
-    for index, block in enumerate(_chart_blocks(context)[:4], start=1):
+    for index, block in enumerate(chart_blocks, start=1):
         _add_heading(doc, f"图 {index}：{block['title']}", 2)
         if block["path"].exists():
             doc.add_picture(str(block["path"]), width=Inches(6.0))
-        _add_paragraph(doc, f"怎么看：{block['how_to_read']}")
-        _add_paragraph(doc, f"本图结论：{block['meaning']}")
-
-    _add_heading(doc, "六、业务解释与建议", 1)
-    business_lines = _plain_section_rows(context, "业务/公共卫生解释", limit=6)
-    if business_lines:
-        _add_bullets(doc, business_lines)
-    else:
-        _add_bullets(doc, _recommendations(context))
-
-    _add_heading(doc, "七、名词解释", 1)
-    _add_table(doc, _glossary_rows(context))
-
-    _add_heading(doc, "八、原始产物清单", 1)
-    _add_table(doc, _artifact_index(context))
+        _add_paragraph(doc, block["interpretation"], space_after=4)
+        _add_paragraph(doc, block["implication"], space_after=4)
+        if block.get("caption_note"):
+            _add_paragraph(doc, f"注释：{block['caption_note']}", size=9.6, first_line_indent=False, line_spacing=1.2, space_after=6)
+    if chart_overall_summary:
+        _add_heading(doc, "图表总体解读", 2)
+        _add_paragraph(doc, chart_overall_summary, space_after=6)
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     temp_path = output_path.with_name(f"{output_path.stem}.tmp{output_path.suffix}")
@@ -1385,10 +1784,10 @@ def _build_pdf_styles() -> dict[str, ParagraphStyle]:
             name="ZH-Title",
             parent=styles["Title"],
             fontName=pdf_font_name,
-            fontSize=18,
-            leading=24,
+            fontSize=19.5,
+            leading=26,
             alignment=1,
-            spaceAfter=16,
+            spaceAfter=18,
         )
     )
     styles.add(
@@ -1396,10 +1795,10 @@ def _build_pdf_styles() -> dict[str, ParagraphStyle]:
             name="ZH-Heading1",
             parent=styles["Heading1"],
             fontName=pdf_font_name,
-            fontSize=14,
-            leading=18,
-            spaceBefore=8,
-            spaceAfter=6,
+            fontSize=15,
+            leading=20,
+            spaceBefore=10,
+            spaceAfter=7,
         )
     )
     styles.add(
@@ -1407,10 +1806,10 @@ def _build_pdf_styles() -> dict[str, ParagraphStyle]:
             name="ZH-Heading2",
             parent=styles["Heading2"],
             fontName=pdf_font_name,
-            fontSize=11.5,
-            leading=15,
-            spaceBefore=6,
-            spaceAfter=4,
+            fontSize=12.2,
+            leading=17,
+            spaceBefore=7,
+            spaceAfter=5,
         )
     )
     styles.add(
@@ -1418,9 +1817,39 @@ def _build_pdf_styles() -> dict[str, ParagraphStyle]:
             name="ZH-Body",
             parent=styles["BodyText"],
             fontName=pdf_font_name,
-            fontSize=9.6,
-            leading=14,
-            spaceAfter=4,
+            fontSize=10.1,
+            leading=16.4,
+            spaceAfter=5,
+            alignment=4,
+            firstLineIndent=18,
+            wordWrap="CJK",
+            splitLongWords=True,
+        )
+    )
+    styles.add(
+        ParagraphStyle(
+            name="ZH-List",
+            parent=styles["BodyText"],
+            fontName=pdf_font_name,
+            fontSize=10.1,
+            leading=15.2,
+            spaceAfter=3.5,
+            alignment=4,
+            wordWrap="CJK",
+            splitLongWords=True,
+        )
+    )
+    styles.add(
+        ParagraphStyle(
+            name="ZH-Meta",
+            parent=styles["BodyText"],
+            fontName=pdf_font_name,
+            fontSize=10.0,
+            leading=13.5,
+            alignment=1,
+            spaceAfter=2.5,
+            wordWrap="CJK",
+            splitLongWords=True,
         )
     )
     styles.add(
@@ -1428,9 +1857,12 @@ def _build_pdf_styles() -> dict[str, ParagraphStyle]:
             name="ZH-Small",
             parent=styles["BodyText"],
             fontName=pdf_font_name,
-            fontSize=8.8,
-            leading=12,
-            spaceAfter=3,
+            fontSize=8.9,
+            leading=12.5,
+            spaceAfter=4,
+            textColor=colors.HexColor("#666666"),
+            wordWrap="CJK",
+            splitLongWords=True,
         )
     )
     styles.add(
@@ -1566,31 +1998,38 @@ def _pdf_summary_card_rows(context: dict[str, Any]) -> list[list[str]]:
     ]
 
 
-def _render_pdf(run_dir: Path, output_path: Path, context: dict[str, Any], title: str) -> None:
+def _render_pdf(
+    run_dir: Path,
+    output_path: Path,
+    context: dict[str, Any],
+    title: str,
+    chart_blocks: list[dict[str, Any]],
+    chart_overall_summary: str,
+) -> None:
     styles = _build_pdf_styles()
     story: list[Any] = []
 
     story.append(Paragraph(title, styles["ZH-Title"]))
-    story.append(Paragraph("正式中文分析报告", styles["ZH-Body"]))
-    story.append(Paragraph(f"报告类型：{_friendly_task_label(context.get('task'))}", styles["ZH-Body"]))
-    story.append(Paragraph(f"生成日期：{date.today()}", styles["ZH-Small"]))
-    story.append(Spacer(1, 0.25 * cm))
+    story.append(Paragraph("正式中文分析报告", styles["ZH-Meta"]))
+    story.append(Paragraph(f"报告类型：{_friendly_task_label(context.get('task'))}", styles["ZH-Meta"]))
+    story.append(Paragraph(f"生成日期：{date.today()}", styles["ZH-Meta"]))
+    story.append(Spacer(1, 0.28 * cm))
 
     story.append(Paragraph("一句话结论", styles["ZH-Heading1"]))
     story.append(Paragraph(_executive_conclusion(context), styles["ZH-Body"]))
     story.append(Spacer(1, 0.15 * cm))
     story.append(_pdf_table(_pdf_summary_card_rows(context), styles, [2.6 * cm, 5.4 * cm, 2.6 * cm, 5.0 * cm]))
-    story.append(Spacer(1, 0.2 * cm))
+    story.append(Spacer(1, 0.24 * cm))
 
     story.append(Paragraph("关键发现", styles["ZH-Heading1"]))
     for item in _key_findings(context)[:4]:
-        story.append(Paragraph(f"- {_normalize_report_text(item)}", styles["ZH-Body"]))
+        story.append(Paragraph(f"- {_normalize_report_text(item)}", styles["ZH-List"]))
     story.append(Paragraph("建议动作", styles["ZH-Heading1"]))
     for item in _recommendations(context)[:4]:
-        story.append(Paragraph(f"- {_normalize_report_text(item)}", styles["ZH-Body"]))
+        story.append(Paragraph(f"- {_normalize_report_text(item)}", styles["ZH-List"]))
     story.append(Paragraph("风险提示", styles["ZH-Heading1"]))
     for item in _risk_items(context)[:3]:
-        story.append(Paragraph(f"- {_normalize_report_text(item)}", styles["ZH-Body"]))
+        story.append(Paragraph(f"- {_normalize_report_text(item)}", styles["ZH-List"]))
 
     story.append(PageBreak())
     story.append(Paragraph("二、分析背景与方法", styles["ZH-Heading1"]))
@@ -1604,50 +2043,44 @@ def _render_pdf(run_dir: Path, output_path: Path, context: dict[str, Any], title
 
     model_lines = _plain_section_rows(context, "模型结果", limit=4)
     if model_lines:
-        story.append(Spacer(1, 0.2 * cm))
+        story.append(Spacer(1, 0.24 * cm))
         story.append(Paragraph("模型结果补充说明", styles["ZH-Heading2"]))
         for item in model_lines:
-            story.append(Paragraph(f"- {_normalize_report_text(item)}", styles["ZH-Body"]))
+            story.append(Paragraph(f"- {_normalize_report_text(item)}", styles["ZH-List"]))
 
     explain_lines = _plain_section_rows(context, "可解释性结论", limit=5)
     if explain_lines:
         story.append(Paragraph("解释性补充说明", styles["ZH-Heading2"]))
         for item in explain_lines:
-            story.append(Paragraph(f"- {_normalize_report_text(item)}", styles["ZH-Body"]))
+            story.append(Paragraph(f"- {_normalize_report_text(item)}", styles["ZH-List"]))
 
     story.append(PageBreak())
     story.append(Paragraph("四、图表解读", styles["ZH-Heading1"]))
-    for index, block in enumerate(_chart_blocks(context)[:4], start=1):
-        story.append(Paragraph(f"图 {index}：{block['title']}", styles["ZH-Heading2"]))
+    for index, block in enumerate(chart_blocks, start=1):
+        chart_story: list[Any] = [Paragraph(f"图 {index}：{block['title']}", styles["ZH-Heading2"])]
         if block["path"].exists():
-            story.append(Image(str(block["path"]), width=15.0 * cm, height=8.6 * cm))
-        story.append(Paragraph(f"怎么看：{block['how_to_read']}", styles["ZH-Body"]))
-        story.append(Paragraph(f"本图结论：{block['meaning']}", styles["ZH-Body"]))
-        story.append(Spacer(1, 0.12 * cm))
-
-    story.append(PageBreak())
-    story.append(Paragraph("五、业务解释与名词说明", styles["ZH-Heading1"]))
-    business_lines = _plain_section_rows(context, "业务/公共卫生解释", limit=6)
-    if business_lines:
-        for item in business_lines:
-            story.append(Paragraph(f"- {_normalize_report_text(item)}", styles["ZH-Body"]))
-    else:
-        for item in _recommendations(context):
-            story.append(Paragraph(f"- {_normalize_report_text(item)}", styles["ZH-Body"]))
-    story.append(Spacer(1, 0.12 * cm))
-    story.append(_pdf_table(_glossary_rows(context), styles, [2.2 * cm, 5.4 * cm, 8.0 * cm]))
-    story.append(Spacer(1, 0.12 * cm))
-    story.append(_pdf_table(_artifact_index(context), styles, [4.0 * cm, 1.8 * cm, 9.6 * cm]))
+            chart_story.append(Image(str(block["path"]), width=14.2 * cm, height=7.8 * cm))
+            chart_story.append(Spacer(1, 0.08 * cm))
+        chart_story.append(Paragraph(_normalize_report_text(block["interpretation"]), styles["ZH-Body"]))
+        chart_story.append(Paragraph(_normalize_report_text(block["implication"]), styles["ZH-Body"]))
+        if block.get("caption_note"):
+            chart_story.append(Paragraph(f"注释：{_normalize_report_text(block['caption_note'])}", styles["ZH-Small"]))
+        chart_story.append(Spacer(1, 0.18 * cm))
+        story.append(KeepTogether(chart_story))
+    if chart_overall_summary:
+        story.append(Paragraph("图表总体解读", styles["ZH-Heading2"]))
+        story.append(Paragraph(_normalize_report_text(chart_overall_summary), styles["ZH-Body"]))
+        story.append(Spacer(1, 0.18 * cm))
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     temp_path = output_path.with_name(f"{output_path.stem}.tmp{output_path.suffix}")
     document = SimpleDocTemplate(
         str(temp_path),
         pagesize=A4,
-        leftMargin=1.6 * cm,
-        rightMargin=1.6 * cm,
-        topMargin=1.5 * cm,
-        bottomMargin=1.5 * cm,
+        leftMargin=1.9 * cm,
+        rightMargin=1.9 * cm,
+        topMargin=1.8 * cm,
+        bottomMargin=1.8 * cm,
         title=title,
     )
     document.build(story)
@@ -1720,6 +2153,11 @@ def _extract_pdf_text(pdf_path: Path) -> tuple[str | None, str | None]:
 def validate_formal_report_outputs(run_dir: Path, docx_path: Path, pdf_path: Path, context: dict[str, Any]) -> dict[str, Any]:
     validation: dict[str, Any] = {
         "run_dir": str(run_dir),
+        "chart_review": {
+            "exists": bool(context.get("chart_review")),
+            "status": (context.get("chart_review") or {}).get("status"),
+            "warnings": [],
+        },
         "docx": {
             "exists": docx_path.exists(),
             "path": str(docx_path),
@@ -1734,6 +2172,9 @@ def validate_formal_report_outputs(run_dir: Path, docx_path: Path, pdf_path: Pat
         },
         "warnings": [],
     }
+
+    chart_review = context.get("chart_review") or {}
+    validation["chart_review"]["warnings"].extend(_lint_chart_review_content(chart_review))
 
     if docx_path.exists():
         try:
@@ -1784,22 +2225,51 @@ def validate_formal_report_outputs(run_dir: Path, docx_path: Path, pdf_path: Pat
 
     validation["warnings"].extend(validation["docx"]["warnings"])
     validation["warnings"].extend(validation["pdf"]["warnings"])
+    validation["warnings"].extend(validation["chart_review"]["warnings"])
     non_blocking_fragments = ("仅做文件级检查", "PDF 文本抽取失败")
     blocking_warnings = [warning for warning in validation["warnings"] if not any(fragment in warning for fragment in non_blocking_fragments)]
     validation["passed"] = validation["docx"].get("exists") and validation["pdf"].get("exists") and not blocking_warnings
     return validation
 
 
-def export_formal_report(run_dir: Path, docx_path: Path | None = None, pdf_path: Path | None = None, title: str | None = None) -> dict[str, Any]:
+def export_formal_report(
+    run_dir: Path,
+    docx_path: Path | None = None,
+    pdf_path: Path | None = None,
+    title: str | None = None,
+    chart_review_json_path: Path | None = None,
+) -> dict[str, Any]:
     context = _load_context(run_dir)
     report_title = title or "正式中文分析报告"
     docx_output = docx_path or (run_dir / "analysis-report-zh.docx")
     pdf_output = pdf_path or (run_dir / "analysis-report-zh.pdf")
-    _render_docx(run_dir, docx_output, context, report_title)
-    _render_pdf(run_dir, pdf_output, context, report_title)
+    draft_review = _prepare_report_context(run_dir, context, report_title)
+    chart_blocks = _chart_blocks(context)[:MAX_FORMAL_REPORT_CHARTS]
+    provided_review, provided_review_path = _resolve_chart_review(run_dir, chart_review_json_path)
+    normalized_review = _normalize_chart_review(chart_blocks, provided_review, draft_review)
+    context["chart_review"] = normalized_review
+    if provided_review_path is not None:
+        write_json(run_dir / "chart_review.json", normalized_review)
+        write_markdown(run_dir / "chart_review.md", _chart_review_markdown(normalized_review))
+        context["json_files"] = sorted(run_dir.glob("*.json"))
+        context["markdown_files"] = sorted(run_dir.glob("*.md"))
+    chart_blocks, chart_overall_summary = _chart_blocks_with_review(context)
+    _render_docx(run_dir, docx_output, context, report_title, chart_blocks, chart_overall_summary)
+    _render_pdf(run_dir, pdf_output, context, report_title, chart_blocks, chart_overall_summary)
     validation = validate_formal_report_outputs(run_dir, docx_output, pdf_output, context)
     write_json(run_dir / "formal_report_validation.json", validation)
-    return {"docx": str(docx_output), "pdf": str(pdf_output), "validation": str(run_dir / "formal_report_validation.json")}
+    result = {
+        "docx": str(docx_output),
+        "pdf": str(pdf_output),
+        "validation": str(run_dir / "formal_report_validation.json"),
+        "formal_report_draft": str(run_dir / "formal_report_draft.md"),
+        "report_context": str(run_dir / "report_context.json"),
+        "report_stage": "final" if provided_review_path is not None else "draft",
+    }
+    if provided_review_path is not None:
+        result["chart_review"] = str(run_dir / "chart_review.json")
+        result["chart_review_markdown"] = str(run_dir / "chart_review.md")
+    return result
 
 
 def main() -> int:
@@ -1808,6 +2278,7 @@ def main() -> int:
     parser.add_argument("--docx-path")
     parser.add_argument("--pdf-path")
     parser.add_argument("--title")
+    parser.add_argument("--chart-review-json")
     args = parser.parse_args()
 
     result = export_formal_report(
@@ -1815,6 +2286,7 @@ def main() -> int:
         docx_path=Path(args.docx_path).expanduser().resolve() if args.docx_path else None,
         pdf_path=Path(args.pdf_path).expanduser().resolve() if args.pdf_path else None,
         title=args.title,
+        chart_review_json_path=Path(args.chart_review_json).expanduser().resolve() if args.chart_review_json else None,
     )
     print(json.dumps(result, ensure_ascii=False, indent=2))
     return 0

@@ -49,6 +49,110 @@ CJK_FONT_FILE_CANDIDATES = [
     "/System/Library/Fonts/STHeiti Light.ttc",
 ]
 
+CHART_TARGET_LABELS = {
+    "obese": "是否肥胖",
+}
+
+CHART_FEATURE_LABELS = {
+    "diabetes_status_no": "无糖尿病",
+    "diabetes_status_yes": "已确诊糖尿病",
+    "diabetes_status_prediabetes": "前驱糖尿病",
+    "general_health_excellent": "自评健康优秀",
+    "general_health_very_good": "自评健康很好",
+    "general_health_good": "自评健康良好",
+    "general_health_fair": "自评健康一般偏差",
+    "general_health_poor": "自评健康较差",
+    "age_group_80": "80岁及以上组",
+    "age_group_18_24": "18-24岁组",
+    "exercise_past_30d_no": "过去30天未运动",
+    "exercise_past_30d_yes": "过去30天有运动",
+    "leisure_time_activity_no": "无休闲活动",
+    "leisure_time_activity_yes": "有休闲活动",
+    "asthma_status_yes": "有哮喘史",
+    "asthma_status_no": "无哮喘史",
+    "education_level_college_grad": "大学毕业",
+    "education_level_some_college": "部分大学教育",
+    "personal_doctor_one_doctor": "有1位固定医生",
+    "personal_doctor_multiple_doctors": "有多位固定医生",
+    "ever_smoked_100_no": "无明显吸烟史",
+    "ever_smoked_100_yes": "有明显吸烟史",
+    "sex_female": "女性",
+    "sex_male": "男性",
+    "income_bracket_unknown": "收入分组未知",
+}
+
+CHART_PREFIX_LABELS = {
+    "age_group": "年龄组",
+    "general_health": "自评健康",
+    "exercise_past_30d": "过去30天运动情况",
+    "leisure_time_activity": "休闲活动",
+    "diabetes_status": "糖尿病状态",
+    "education_level": "教育程度",
+    "personal_doctor": "固定医生情况",
+    "ever_smoked_100": "吸烟史",
+    "income_bracket": "收入分组",
+    "heart_disease": "心脏病情况",
+    "asthma_status": "哮喘情况",
+    "sex": "性别",
+}
+
+CHART_VALUE_LABELS = {
+    "yes": "有",
+    "no": "无",
+    "unknown": "未知",
+    "excellent": "优秀",
+    "very_good": "很好",
+    "good": "良好",
+    "fair": "一般偏差",
+    "poor": "较差",
+    "female": "女性",
+    "male": "男性",
+    "one_doctor": "有1位固定医生",
+    "multiple_doctors": "有多位固定医生",
+    "18_24": "18-24岁组",
+    "25_29": "25-29岁组",
+    "30_34": "30-34岁组",
+    "35_39": "35-39岁组",
+    "40_44": "40-44岁组",
+    "45_49": "45-49岁组",
+    "50_54": "50-54岁组",
+    "55_59": "55-59岁组",
+    "60_64": "60-64岁组",
+    "65_69": "65-69岁组",
+    "70_74": "70-74岁组",
+    "75_79": "75-79岁组",
+    "80": "80岁及以上组",
+    "college_grad": "大学毕业",
+    "some_college": "部分大学教育",
+    "prediabetes": "前驱糖尿病",
+}
+
+CHART_TOKEN_LABELS = {
+    "age": "年龄",
+    "group": "组",
+    "general": "总体",
+    "health": "健康",
+    "exercise": "运动",
+    "past": "过去",
+    "status": "状态",
+    "diabetes": "糖尿病",
+    "education": "教育",
+    "level": "程度",
+    "personal": "个人",
+    "doctor": "医生",
+    "income": "收入",
+    "bracket": "分组",
+    "heart": "心脏",
+    "disease": "疾病",
+    "asthma": "哮喘",
+    "sex": "性别",
+    "smoked": "吸烟",
+    "smoke": "吸烟",
+    "unknown": "未知",
+    "yes": "有",
+    "no": "无",
+}
+
 
 def _configure_runtime_environment() -> None:
     mpl_config_dir = Path(tempfile.gettempdir()) / "codex-mplconfig"
@@ -237,3 +341,39 @@ def to_serializable(value: Any) -> Any:
     if hasattr(value, "item"):
         return value.item()
     return value
+
+
+def friendly_chart_target_label(name: str | None) -> str:
+    if not name:
+        return "目标变量"
+    return CHART_TARGET_LABELS.get(name, name)
+
+
+def friendly_chart_feature_label(name: str | None) -> str:
+    if not name:
+        return "变量"
+    if name in CHART_FEATURE_LABELS:
+        return CHART_FEATURE_LABELS[name]
+
+    for prefix in sorted(CHART_PREFIX_LABELS, key=len, reverse=True):
+        needle = f"{prefix}_"
+        if name.startswith(needle):
+            value = name[len(needle) :]
+            friendly_prefix = CHART_PREFIX_LABELS[prefix]
+            friendly_value = CHART_VALUE_LABELS.get(value)
+            if friendly_value:
+                if prefix == "age_group":
+                    return friendly_value
+                return f"{friendly_prefix}={friendly_value}"
+            if re.fullmatch(r"\d+_\d+", value):
+                if prefix == "age_group":
+                    return f"{value.replace('_', '-')}岁组"
+                return f"{friendly_prefix}={value.replace('_', '-')}"
+            if re.fullmatch(r"\d+", value):
+                if prefix == "age_group":
+                    return f"{value}岁及以上组"
+                return f"{friendly_prefix}={value}"
+            return f"{friendly_prefix}={value.replace('_', ' ')}"
+
+    tokens = [CHART_TOKEN_LABELS.get(token, token) for token in str(name).split("_")]
+    return " ".join(tokens)
