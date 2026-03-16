@@ -1,0 +1,7 @@
+assets/*
+!assets/.gitkeep
+outputs/*
+!outputs/.gitkeep
+__pycache__/
+*.py[cod]
+.DS_Store

@@ -1,0 +1,36 @@
+# macOS
+.DS_Store
+
+# Editors
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Secrets
+.env
+.env.*
+!.env.example
+
+# Logs and temp files
+*.log
+*.tmp
+
+# Data-analysis local datasets and generated outputs
+data_analysis/assets/*
+!data_analysis/assets/.gitkeep
+data_analysis/outputs/*
+!data_analysis/outputs/.gitkeep

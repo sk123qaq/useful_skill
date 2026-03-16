@@ -1,0 +1,7 @@
+interface:
+  display_name: "Data Analysis"
+  short_description: "Plan and execute structured data analysis workflows"
+  default_prompt: "Use $data-analysis to define the problem, read the data, run analysis, and deliver business-ready findings."
+
+policy:
+  allow_implicit_invocation: true
