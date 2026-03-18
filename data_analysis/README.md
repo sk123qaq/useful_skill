@@ -36,6 +36,12 @@ python3 scripts/check_environment.py
 # 先只生成规划与环境产物
 python3 scripts/run_pipeline.py --plan-only
 
+# 常规分析（默认同时导出 report_dashboard.html + report_process.html）
+python3 scripts/run_pipeline.py --input-path /path/to/data.csv --task regression --target y
+
+# 如需关闭全流程报告，仅保留 dashboard
+python3 scripts/run_pipeline.py --input-path /path/to/data.csv --task regression --target y --no-process-report
+
 # 运行 WDI 数据集适配器
 python3 scripts/run_pipeline.py --dataset wdi --input-path /path/to/WDI_csv.zip
 ```

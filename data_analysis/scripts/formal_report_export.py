@@ -387,6 +387,29 @@ CHART_REVIEW_META_PHRASES = [
     "不能只当成单一数字来理解",
 ]
 
+FORMAL_REPORT_TEMPLATE_LEAK_PHRASES = [
+    "explainability generated",
+    "top permutation-importance",
+    "top 3",
+    "context",
+    "insight",
+    "recommendation",
+    "risk",
+    "loaded ",
+    "detected ",
+    "review ",
+    "consider ",
+    "generated for model",
+    "no recommendation generated yet",
+    "a planning-only run was requested",
+]
+
+
+def _report_stage_label(stage: str | None) -> str:
+    if stage == "final":
+        return "正式版（已完成图表复核）"
+    return "草稿版（需二次图表复核）"
+
 
 def _load_json(path: Path) -> dict[str, Any] | None:
     if not path.exists():
@@ -676,15 +699,24 @@ def _section_lines(context: dict[str, Any], section_name: str, limit: int | None
     return normalized[:limit] if limit is not None else normalized
 
 
+def _contains_template_leak(text: str) -> bool:
+    lowered = text.lower()
+    return any(phrase in lowered for phrase in FORMAL_REPORT_TEMPLATE_LEAK_PHRASES)
+
+
 def _line_is_formal_report_ready(line: str) -> bool:
     stripped = line.strip()
     if not stripped:
         return False
     if stripped.startswith(("Loaded ", "Detected ", "Review ", "Consider ", "Experiment decision status:", "DID estimate:", "did ", "Top permutation-importance")):
         return False
+    if _contains_template_leak(stripped):
+        return False
     chinese_chars = sum(1 for char in stripped if "\u4e00" <= char <= "\u9fff")
     ascii_letters = sum(1 for char in stripped if char.isascii() and char.isalpha())
-    if chinese_chars == 0 and ascii_letters >= 10:
+    if chinese_chars == 0 and ascii_letters >= 6:
+        return False
+    if ascii_letters >= 18 and chinese_chars < 6:
         return False
     return True
 
@@ -842,6 +874,12 @@ def _method_summary(context: dict[str, Any]) -> str:
 
     if task == "classification":
         model_count = len(model_report.get("models", {}))
+        if model_count == 0:
+            return (
+                f"本次采用 {_friendly_task_label(task)} 的预建模流程。"
+                f"已完成 {row_count} 条样本的数据质量检查、统计分析、特征规划和基础图表产出，"
+                "当前尚未进入模型训练。"
+            )
         explain_model = _friendly_model_name(explainability.get("model_name"))
         return (
             f"本次采用 {_friendly_task_label(task)}。首先对 {row_count} 条样本做数据质量检查，"
@@ -855,6 +893,12 @@ def _method_summary(context: dict[str, Any]) -> str:
         )
     if task == "regression":
         model_count = len(model_report.get("models", {}))
+        if model_count == 0:
+            return (
+                f"本次采用 {_friendly_task_label(task)} 的预建模流程。"
+                f"已完成 {row_count} 条样本的数据质量检查、统计分析、特征规划和基础图表产出，"
+                "当前尚未进入模型训练。"
+            )
         return (
             f"本次采用 {_friendly_task_label(task)}。首先对 {row_count} 条样本做数据质量检查和特征规划，"
             f"随后比较 {model_count} 个基线回归模型，并使用 R2、RMSE、MAE 等指标评估预测误差与解释力。"
@@ -916,6 +960,17 @@ def _metric_commentary(context: dict[str, Any]) -> list[list[str]]:
     positive_rate = _positive_rate(context)
     task = context.get("task")
     analysis = context.get("analysis_report") or {}
+    if task in {"classification", "regression"} and not best_model and not metrics:
+        rows.append(
+            [
+                "当前阶段",
+                "预建模检查",
+                "表示本次运行停留在数据准备与图表复核阶段，尚未训练模型。",
+                "需确认是否继续",
+                "如果用户确认继续，再进入模型训练与评估；如果不继续，本报告可作为阶段性复核版本。",
+            ]
+        )
+        return rows
     if best_model:
         rows.append(
             [
@@ -1148,6 +1203,13 @@ def _recommendations(context: dict[str, Any]) -> list[str]:
             recommendations.append(polished)
     if recommendations:
         return recommendations[:4]
+    best_model, metrics = _best_model_metrics(context)
+    if context.get("task") in {"classification", "regression"} and not best_model and not metrics:
+        return [
+            "若要继续，请先确认样本/全量口径、抽样策略以及预计耗时，再进入模型训练阶段。",
+            "若暂不继续，当前报告可作为预建模复核版本，重点用于确认数据质量、目标分布和后续模型选择方向。",
+            "建议在下一轮继续时优先比较轻量基线模型，再按结果决定是否上更重模型。",
+        ]
     if context.get("task") == "classification":
         return [
             "将模型优先用于高风险人群分层和干预优先级排序，而不是直接用于个体级最终判定。",
@@ -1306,18 +1368,29 @@ def _technical_chart_note_hint(block: dict[str, Any]) -> str:
 
 
 def _draft_chart_interpretation(block: dict[str, Any]) -> str:
+    file_name = block.get("path").name if block.get("path") else ""
+    title = block.get("title") or "图表"
+    if file_name == "target_distribution.png":
+        return _ensure_sentence("先确认目标值是否明显失衡；如果正负样本差距较大，后续模型表现不能只看 Accuracy，还要结合召回率和 F1。")
+    if file_name == "shap_bar.png":
+        return _ensure_sentence("先核对前几位重要变量是否集中在年龄、自评健康、运动和慢病状态；如果排序稳定，说明模型抓到的是可解释信号。")
+    if file_name.startswith("pdp_"):
+        feature_name = file_name.removeprefix("pdp_").removesuffix(".png")
+        feature_label = _friendly_feature_name(feature_name)
+        return _ensure_sentence(f"先看 {feature_label} 的边际曲线是上升、下降还是接近平坦；如果方向稳定，说明这个变量对模型判断有持续影响。")
     kind = _chart_kind_label(str(block.get("chart_type")))
-    intro = {
-        "趋势图": f"这张{kind}展示了“{block['title']}”相关结果，适合帮助读者把时间变化看得更直观。",
-        "散点图": f"这张{kind}展示了“{block['title']}”相关结果，适合帮助读者观察变量之间是否存在共同变化方向。",
-        "柱状对比图": f"这张{kind}展示了“{block['title']}”相关结果，适合帮助读者直接比较不同对象或不同指标之间的差异。",
-        "热力图": f"这张{kind}展示了“{block['title']}”相关结果，适合帮助读者同时比较多个群组在多个维度上的相对高低。",
-    }.get(kind, f"这张图展示了“{block['title']}”相关结果，用来补充说明本次分析中的关键发现。")
-    return _ensure_sentence(intro)
+    return _ensure_sentence(f"先核对 {title} 对应的 {kind} 是否把差异最明显的对象、拐点或尾部区域凸显出来，再判断业务含义是否稳定。")
 
 
 def _draft_chart_implication(block: dict[str, Any]) -> str:
-    return _ensure_sentence(block.get("meaning") or "这张图用于补充说明本次分析结果。")
+    file_name = block.get("path").name if block.get("path") else ""
+    if file_name == "target_distribution.png":
+        return _ensure_sentence("这意味着后续模型评估必须和类别基线一起看，不能让多数类准确率掩盖少数类识别能力。")
+    if file_name == "shap_bar.png":
+        return _ensure_sentence("这意味着正式报告里的解释应优先围绕这些高权重维度展开，而不是只盯单个分数。")
+    if file_name.startswith("pdp_"):
+        return _ensure_sentence("这意味着可以进一步核对变量方向是否与业务常识一致，再决定是否进入定稿。")
+    return _ensure_sentence("这意味着应结合图中的差异幅度、方向和尾部特征，再判断它能否支撑后续决策。")
 
 
 def _draft_chart_review(chart_blocks: list[dict[str, Any]]) -> dict[str, Any]:
@@ -1336,7 +1409,7 @@ def _draft_chart_review(chart_blocks: list[dict[str, Any]]) -> dict[str, Any]:
         "generated_at": datetime.now().isoformat(timespec="seconds"),
         "status": "draft",
         "source": "deterministic-draft",
-        "overall_summary": "以上图表分别从分布、差异、关系或分群结构等角度补充说明本次分析中的关键结果。" if chart_blocks else "",
+        "overall_summary": "这些图要一起看：先用分布图判断基线是否失衡，再用特征重要性和 PDP 核对模型抓到的是否是可解释信号。" if chart_blocks else "",
         "charts": charts,
     }
 
@@ -1344,6 +1417,8 @@ def _draft_chart_review(chart_blocks: list[dict[str, Any]]) -> dict[str, Any]:
 def _build_formal_report_draft_markdown(context: dict[str, Any], title: str, draft_review: dict[str, Any]) -> str:
     lines = [
         f"# {title}",
+        "",
+        "> 报告状态：草稿版，当前图表解读为自动草稿，需二次图表复核后再定稿。",
         "",
         "## 执行摘要",
         _executive_conclusion(context),
@@ -1398,6 +1473,8 @@ def _report_context_payload(context: dict[str, Any], title: str, draft_review: d
     return {
         "generated_at": datetime.now().isoformat(timespec="seconds"),
         "report_title": title,
+        "report_stage": "draft",
+        "chart_review_status_hint": draft_review.get("status", "draft"),
         "task": _friendly_task_label(context.get("task")),
         "executive_conclusion": _executive_conclusion(context),
         "key_findings": _key_findings(context),
@@ -1477,7 +1554,7 @@ def _normalize_chart_review(chart_blocks: list[dict[str, Any]], review: dict[str
     overall_summary = _ensure_sentence((review or {}).get("overall_summary") or draft_review.get("overall_summary"))
     normalized = {
         "generated_at": datetime.now().isoformat(timespec="seconds"),
-        "status": "provided" if review else draft_review.get("status", "draft"),
+        "status": "final" if review else draft_review.get("status", "draft"),
         "source": "chart-review-json" if review else draft_review.get("source", "deterministic-draft"),
         "overall_summary": overall_summary,
         "charts": normalized_charts,
@@ -1494,6 +1571,7 @@ def _chart_review_markdown(review: dict[str, Any]) -> str:
         f"- 生成时间：{review.get('generated_at', 'N/A')}",
         f"- 来源：{review.get('source', 'N/A')}",
         f"- 状态：{review.get('status', 'N/A')}",
+        f"- 报告阶段：{_report_stage_label(review.get('status'))}",
     ]
     lines.extend(["", "## 逐图解读"])
     for item in review.get("charts", []):
@@ -1514,7 +1592,7 @@ def _chart_review_markdown(review: dict[str, Any]) -> str:
 
 def _lint_chart_review_content(review: dict[str, Any]) -> list[str]:
     warnings: list[str] = []
-    if not review or review.get("status") != "provided":
+    if not review or review.get("status") != "final":
         return warnings
     for item in review.get("charts", []):
         if not isinstance(item, dict):
@@ -1579,9 +1657,15 @@ def _resolve_chart_review(run_dir: Path, explicit_path: Path | None) -> tuple[di
         if payload is None:
             raise ValueError(f"chart review JSON is empty or invalid: {explicit_path}")
         return payload, explicit_path if payload is not None else None
+    # Default behavior: reuse a previously generated non-draft chart review when present.
+    # This keeps run_pipeline -> formal_report_export connected without requiring an explicit flag.
     default_path = run_dir / "chart_review.json"
     payload = _load_chart_review(default_path)
-    return payload, default_path if payload is not None else None
+    if isinstance(payload, dict):
+        status = str(payload.get("status") or "").strip().lower()
+        if status in {"final", "provided"}:
+            return payload, default_path
+    return None, None
 
 
 def _glossary_rows(context: dict[str, Any]) -> list[list[str]]:
@@ -1703,6 +1787,7 @@ def _render_docx(
     title: str,
     chart_blocks: list[dict[str, Any]],
     chart_overall_summary: str,
+    report_stage_label: str,
 ) -> None:
     doc = Document()
     section = doc.sections[0]
@@ -1720,6 +1805,7 @@ def _render_docx(
     _add_paragraph(doc, title, size=20.5, bold=True, align=WD_ALIGN_PARAGRAPH.CENTER, first_line_indent=False, line_spacing=1.1, space_after=7, font_name=DOCX_HEADING_FONT_NAME)
     _add_paragraph(doc, "正式中文分析报告", size=12.5, align=WD_ALIGN_PARAGRAPH.CENTER, first_line_indent=False, line_spacing=1.15, space_after=3)
     _add_paragraph(doc, f"报告类型：{_friendly_task_label(context.get('task'))}", size=10.8, align=WD_ALIGN_PARAGRAPH.CENTER, first_line_indent=False, line_spacing=1.1, space_after=1)
+    _add_paragraph(doc, f"报告状态：{report_stage_label}", size=10.2, align=WD_ALIGN_PARAGRAPH.CENTER, first_line_indent=False, line_spacing=1.1, space_after=1)
     _add_paragraph(doc, f"生成日期：{date.today()}", size=10.2, align=WD_ALIGN_PARAGRAPH.CENTER, first_line_indent=False, line_spacing=1.1, space_after=8)
     doc.add_paragraph("")
 
@@ -2005,6 +2091,7 @@ def _render_pdf(
     title: str,
     chart_blocks: list[dict[str, Any]],
     chart_overall_summary: str,
+    report_stage_label: str,
 ) -> None:
     styles = _build_pdf_styles()
     story: list[Any] = []
@@ -2012,6 +2099,7 @@ def _render_pdf(
     story.append(Paragraph(title, styles["ZH-Title"]))
     story.append(Paragraph("正式中文分析报告", styles["ZH-Meta"]))
     story.append(Paragraph(f"报告类型：{_friendly_task_label(context.get('task'))}", styles["ZH-Meta"]))
+    story.append(Paragraph(f"报告状态：{report_stage_label}", styles["ZH-Meta"]))
     story.append(Paragraph(f"生成日期：{date.today()}", styles["ZH-Meta"]))
     story.append(Spacer(1, 0.28 * cm))
 
@@ -2151,11 +2239,17 @@ def _extract_pdf_text(pdf_path: Path) -> tuple[str | None, str | None]:
 
 
 def validate_formal_report_outputs(run_dir: Path, docx_path: Path, pdf_path: Path, context: dict[str, Any]) -> dict[str, Any]:
+    report_stage = str(context.get("report_stage") or "draft")
+    chart_review = context.get("chart_review") or {}
+    chart_review_status = str(chart_review.get("status") or "draft")
+    review_required = chart_review_status != "final"
     validation: dict[str, Any] = {
         "run_dir": str(run_dir),
+        "report_stage": report_stage,
         "chart_review": {
             "exists": bool(context.get("chart_review")),
-            "status": (context.get("chart_review") or {}).get("status"),
+            "status": chart_review_status,
+            "review_required": review_required,
             "warnings": [],
         },
         "docx": {
@@ -2173,8 +2267,9 @@ def validate_formal_report_outputs(run_dir: Path, docx_path: Path, pdf_path: Pat
         "warnings": [],
     }
 
-    chart_review = context.get("chart_review") or {}
     validation["chart_review"]["warnings"].extend(_lint_chart_review_content(chart_review))
+    if review_required:
+        validation["chart_review"]["warnings"].append("当前为草稿版，图表解读尚未完成二次复核。")
 
     if docx_path.exists():
         try:
@@ -2245,17 +2340,18 @@ def export_formal_report(
     pdf_output = pdf_path or (run_dir / "analysis-report-zh.pdf")
     draft_review = _prepare_report_context(run_dir, context, report_title)
     chart_blocks = _chart_blocks(context)[:MAX_FORMAL_REPORT_CHARTS]
-    provided_review, provided_review_path = _resolve_chart_review(run_dir, chart_review_json_path)
+    provided_review, _ = _resolve_chart_review(run_dir, chart_review_json_path)
     normalized_review = _normalize_chart_review(chart_blocks, provided_review, draft_review)
+    report_stage = str(normalized_review.get("status") or "draft")
     context["chart_review"] = normalized_review
-    if provided_review_path is not None:
-        write_json(run_dir / "chart_review.json", normalized_review)
-        write_markdown(run_dir / "chart_review.md", _chart_review_markdown(normalized_review))
-        context["json_files"] = sorted(run_dir.glob("*.json"))
-        context["markdown_files"] = sorted(run_dir.glob("*.md"))
+    context["report_stage"] = report_stage
+    write_json(run_dir / "chart_review.json", normalized_review)
+    write_markdown(run_dir / "chart_review.md", _chart_review_markdown(normalized_review))
+    context["json_files"] = sorted(run_dir.glob("*.json"))
+    context["markdown_files"] = sorted(run_dir.glob("*.md"))
     chart_blocks, chart_overall_summary = _chart_blocks_with_review(context)
-    _render_docx(run_dir, docx_output, context, report_title, chart_blocks, chart_overall_summary)
-    _render_pdf(run_dir, pdf_output, context, report_title, chart_blocks, chart_overall_summary)
+    _render_docx(run_dir, docx_output, context, report_title, chart_blocks, chart_overall_summary, _report_stage_label(report_stage))
+    _render_pdf(run_dir, pdf_output, context, report_title, chart_blocks, chart_overall_summary, _report_stage_label(report_stage))
     validation = validate_formal_report_outputs(run_dir, docx_output, pdf_output, context)
     write_json(run_dir / "formal_report_validation.json", validation)
     result = {
@@ -2264,11 +2360,10 @@ def export_formal_report(
         "validation": str(run_dir / "formal_report_validation.json"),
         "formal_report_draft": str(run_dir / "formal_report_draft.md"),
         "report_context": str(run_dir / "report_context.json"),
-        "report_stage": "final" if provided_review_path is not None else "draft",
+        "report_stage": report_stage,
+        "chart_review": str(run_dir / "chart_review.json"),
+        "chart_review_markdown": str(run_dir / "chart_review.md"),
     }
-    if provided_review_path is not None:
-        result["chart_review"] = str(run_dir / "chart_review.json")
-        result["chart_review_markdown"] = str(run_dir / "chart_review.md")
     return result
 
 

@@ -4,69 +4,116 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from common import configure_matplotlib_defaults, friendly_chart_target_label, module_available, write_json
+from common import (
+    configure_matplotlib_defaults,
+    friendly_chart_feature_label,
+    friendly_chart_target_label,
+    module_available,
+    write_json,
+)
+
+
+def _zh_reason(text: str) -> str:
+    replacements = {
+        "Show trend, seasonality, and anomalies over time.": "展示时间变化、季节性和异常波动。",
+        "Show target distribution and skew.": "展示目标分布及其偏斜程度。",
+        "Summarize linear relationships across numeric variables.": "汇总数值变量之间的线性关系。",
+        "Show the most influential features for the selected supervised model.": "展示所选监督模型最重要的影响变量。",
+        "Show directional response for the most important features.": "展示重要变量变化时模型预测的方向性响应。",
+        "Show ordered step counts and drop-offs.": "展示各步骤的数量与流失情况。",
+        "Show active user retention by day or period offset.": "展示按天或周期偏移的留存走势。",
+        "Show retention by acquisition cohort and elapsed period.": "展示按获客 cohort 和经过周期的留存情况。",
+        "Compare cohort-level lifetime value or revenue per user.": "比较 cohort 维度的生命周期价值或人均收入。",
+        "Show the size of each discovered cluster.": "展示每个发现的簇规模。",
+        "Show a 2D projection of cluster separation.": "展示簇在二维投影中的分离情况。",
+        "Show top association rules ranked by lift.": "展示按 lift 排序的高价值关联规则。",
+        "Compare the target distribution across groups.": "比较不同组的目标分布。",
+        "Show the segments with the largest contribution to the KPI delta.": "展示对 KPI 差异贡献最大的细分对象。",
+        "Show pre/post outcome movement for treatment and control.": "展示处理组与对照组在前后期的变化。",
+        "Show the local jump around the running-variable cutoff.": "展示运行变量断点附近的局部跳跃。",
+        "Show binned means around the cutoff.": "展示断点附近的分箱均值。",
+        "Show treated and synthetic trajectories over time.": "展示处理组与合成对照组的时间轨迹。",
+        "Show the treated-minus-synthetic gap over time.": "展示处理组减去合成对照组后的差值轨迹。",
+        "Show the first-stage relationship between instrument and treatment.": "展示工具变量与处理变量之间的一阶段关系。",
+        "Show reduced-form movement in the outcome by instrument.": "展示工具变量对结果变量的简化形式变化。",
+        "Show the residual-on-residual orthogonal regression fit.": "展示残差对残差的正交回归拟合。",
+        "Show the distribution of DML orthogonal scores.": "展示 DML 正交得分的分布。",
+        "Show overlap for the doubly robust nuisance propensity model.": "展示双重稳健模型中的倾向得分重叠情况。",
+        "Show the distribution of doubly robust scores.": "展示双重稳健得分的分布。",
+        "Show common-support overlap between treatment and control.": "展示处理组与对照组的共同支持区间。",
+        "Show covariate balance before and after matching.": "展示匹配前后协变量平衡情况。",
+        "Show the fitted orthogonal-learner effect distribution.": "展示正交学习器估计效应的分布。",
+        "Show the pseudo-outcome distribution used by the orthogonal learner.": "展示正交学习器使用的伪结果分布。",
+        "Show the distribution of predicted treatment effects.": "展示预测处理效应的分布。",
+        "Show observed lift by uplift-ranked bucket.": "展示按 uplift 分桶后的实际提升。",
+        "Show predicted treatment-effect distributions by meta-learner.": "展示元学习器预测的处理效应分布。",
+        "Show agreement between meta-learner CATE estimates.": "展示不同元学习器 CATE 估计的一致性。",
+        "Show the method-specific artifacts for DID, RD, synthetic control, IV, DML, DR, PSM, orthogonal learners, uplift, and CATE.": "展示 DID、RD、合成控制、IV、DML、DR、PSM、正交学习器、uplift 和 CATE 的方法级产物。",
+        "Compare the primary metric between control and treatment.": "比较对照组与实验组的主指标表现。",
+    }
+    return replacements.get(text, text)
 
 
 def select_chart_plan(df, task: str, target: str | None = None, time_col: str | None = None, config: dict[str, Any] | None = None) -> dict[str, Any]:
     numeric_columns = list(df.select_dtypes(include=["number", "bool"]).columns)
     chart_plan = []
     if time_col and time_col in df.columns and target and target in df.columns:
-        chart_plan.append({"chart": "line", "x": time_col, "y": target, "reason": "Show trend, seasonality, and anomalies over time."})
+        chart_plan.append({"chart": "line", "x": time_col, "y": target, "reason": _zh_reason("Show trend, seasonality, and anomalies over time.")})
     if target and target in numeric_columns:
-        chart_plan.append({"chart": "histogram", "x": target, "reason": "Show target distribution and skew."})
+        chart_plan.append({"chart": "histogram", "x": target, "reason": _zh_reason("Show target distribution and skew.")})
     if len(numeric_columns) >= 2:
-        chart_plan.append({"chart": "correlation_heatmap", "columns": numeric_columns[:10], "reason": "Summarize linear relationships across numeric variables."})
+        chart_plan.append({"chart": "correlation_heatmap", "columns": numeric_columns[:10], "reason": _zh_reason("Summarize linear relationships across numeric variables.")})
     if task in {"classification", "regression"} and target:
-        chart_plan.append({"chart": "feature_importance", "reason": "Show the most influential features for the selected supervised model."})
-        chart_plan.append({"chart": "partial_dependence", "reason": "Show directional response for the most important features."})
+        chart_plan.append({"chart": "feature_importance", "reason": _zh_reason("Show the most influential features for the selected supervised model.")})
+        chart_plan.append({"chart": "partial_dependence", "reason": _zh_reason("Show directional response for the most important features.")})
     if task == "funnel":
-        chart_plan.append({"chart": "horizontal_bar", "reason": "Show ordered step counts and drop-offs."})
+        chart_plan.append({"chart": "horizontal_bar", "reason": _zh_reason("Show ordered step counts and drop-offs.")})
     if task == "retention":
-        chart_plan.append({"chart": "retention_curve", "reason": "Show active user retention by day or period offset."})
+        chart_plan.append({"chart": "retention_curve", "reason": _zh_reason("Show active user retention by day or period offset.")})
     if task == "cohort":
-        chart_plan.append({"chart": "cohort_heatmap", "reason": "Show retention by acquisition cohort and elapsed period."})
+        chart_plan.append({"chart": "cohort_heatmap", "reason": _zh_reason("Show retention by acquisition cohort and elapsed period.")})
     if task == "ltv":
-        chart_plan.append({"chart": "cohort_ltv_bar", "reason": "Compare cohort-level lifetime value or revenue per user."})
+        chart_plan.append({"chart": "cohort_ltv_bar", "reason": _zh_reason("Compare cohort-level lifetime value or revenue per user.")})
     if task in {"cluster", "clustering"}:
-        chart_plan.append({"chart": "cluster_size_bar", "reason": "Show the size of each discovered cluster."})
-        chart_plan.append({"chart": "cluster_projection", "reason": "Show a 2D projection of cluster separation."})
+        chart_plan.append({"chart": "cluster_size_bar", "reason": _zh_reason("Show the size of each discovered cluster.")})
+        chart_plan.append({"chart": "cluster_projection", "reason": _zh_reason("Show a 2D projection of cluster separation.")})
     if task in {"apriori", "association", "association-rules"}:
-        chart_plan.append({"chart": "association_rule_bar", "reason": "Show top association rules ranked by lift."})
+        chart_plan.append({"chart": "association_rule_bar", "reason": _zh_reason("Show top association rules ranked by lift.")})
     if task == "anova":
-        chart_plan.append({"chart": "boxplot", "reason": "Compare the target distribution across groups."})
+        chart_plan.append({"chart": "boxplot", "reason": _zh_reason("Compare the target distribution across groups.")})
     if task in {"root-cause", "root_cause"}:
-        chart_plan.append({"chart": "driver_bar", "reason": "Show the segments with the largest contribution to the KPI delta."})
+        chart_plan.append({"chart": "driver_bar", "reason": _zh_reason("Show the segments with the largest contribution to the KPI delta.")})
     if task in {"did", "difference-in-differences", "difference_in_differences"}:
-        chart_plan.append({"chart": "did_trend", "reason": "Show pre/post outcome movement for treatment and control."})
+        chart_plan.append({"chart": "did_trend", "reason": _zh_reason("Show pre/post outcome movement for treatment and control.")})
     if task in {"rd", "regression-discontinuity", "regression_discontinuity", "rdd"}:
-        chart_plan.append({"chart": "rd_scatter", "reason": "Show the local jump around the running-variable cutoff."})
-        chart_plan.append({"chart": "rd_binned_means", "reason": "Show binned means around the cutoff."})
+        chart_plan.append({"chart": "rd_scatter", "reason": _zh_reason("Show the local jump around the running-variable cutoff.")})
+        chart_plan.append({"chart": "rd_binned_means", "reason": _zh_reason("Show binned means around the cutoff.")})
     if task in {"synthetic-control", "synthetic_control", "synth-control", "synthetic"}:
-        chart_plan.append({"chart": "synthetic_path", "reason": "Show treated and synthetic trajectories over time."})
-        chart_plan.append({"chart": "synthetic_gap", "reason": "Show the treated-minus-synthetic gap over time."})
+        chart_plan.append({"chart": "synthetic_path", "reason": _zh_reason("Show treated and synthetic trajectories over time.")})
+        chart_plan.append({"chart": "synthetic_gap", "reason": _zh_reason("Show the treated-minus-synthetic gap over time.")})
     if task in {"iv", "instrumental-variables", "instrumental_variables"}:
-        chart_plan.append({"chart": "iv_first_stage", "reason": "Show the first-stage relationship between instrument and treatment."})
-        chart_plan.append({"chart": "iv_reduced_form", "reason": "Show reduced-form movement in the outcome by instrument."})
+        chart_plan.append({"chart": "iv_first_stage", "reason": _zh_reason("Show the first-stage relationship between instrument and treatment.")})
+        chart_plan.append({"chart": "iv_reduced_form", "reason": _zh_reason("Show reduced-form movement in the outcome by instrument.")})
     if task in {"dml", "double-machine-learning", "double_machine_learning"}:
-        chart_plan.append({"chart": "dml_residual_fit", "reason": "Show the residual-on-residual orthogonal regression fit."})
-        chart_plan.append({"chart": "dml_score_distribution", "reason": "Show the distribution of DML orthogonal scores."})
+        chart_plan.append({"chart": "dml_residual_fit", "reason": _zh_reason("Show the residual-on-residual orthogonal regression fit.")})
+        chart_plan.append({"chart": "dml_score_distribution", "reason": _zh_reason("Show the distribution of DML orthogonal scores.")})
     if task in {"dr", "doubly-robust", "doubly_robust"}:
-        chart_plan.append({"chart": "propensity_overlap", "reason": "Show overlap for the doubly robust nuisance propensity model."})
-        chart_plan.append({"chart": "dr_score_distribution", "reason": "Show the distribution of doubly robust scores."})
+        chart_plan.append({"chart": "propensity_overlap", "reason": _zh_reason("Show overlap for the doubly robust nuisance propensity model.")})
+        chart_plan.append({"chart": "dr_score_distribution", "reason": _zh_reason("Show the distribution of doubly robust scores.")})
     if task in {"psm", "propensity-score-matching", "propensity_score_matching"}:
-        chart_plan.append({"chart": "propensity_overlap", "reason": "Show common-support overlap between treatment and control."})
-        chart_plan.append({"chart": "balance_smd", "reason": "Show covariate balance before and after matching."})
+        chart_plan.append({"chart": "propensity_overlap", "reason": _zh_reason("Show common-support overlap between treatment and control.")})
+        chart_plan.append({"chart": "balance_smd", "reason": _zh_reason("Show covariate balance before and after matching.")})
     if task in {"orthogonal", "orthogonal-learner", "orthogonal_learner"}:
-        chart_plan.append({"chart": "orthogonal_effect_distribution", "reason": "Show the fitted orthogonal-learner effect distribution."})
-        chart_plan.append({"chart": "orthogonal_pseudo_outcome", "reason": "Show the pseudo-outcome distribution used by the orthogonal learner."})
+        chart_plan.append({"chart": "orthogonal_effect_distribution", "reason": _zh_reason("Show the fitted orthogonal-learner effect distribution.")})
+        chart_plan.append({"chart": "orthogonal_pseudo_outcome", "reason": _zh_reason("Show the pseudo-outcome distribution used by the orthogonal learner.")})
     if task in {"uplift", "heterogeneity"}:
-        chart_plan.append({"chart": "uplift_distribution", "reason": "Show the distribution of predicted treatment effects."})
-        chart_plan.append({"chart": "uplift_bucket_lift", "reason": "Show observed lift by uplift-ranked bucket."})
+        chart_plan.append({"chart": "uplift_distribution", "reason": _zh_reason("Show the distribution of predicted treatment effects.")})
+        chart_plan.append({"chart": "uplift_bucket_lift", "reason": _zh_reason("Show observed lift by uplift-ranked bucket.")})
     if task in {"cate", "meta-learner", "meta_learner"}:
-        chart_plan.append({"chart": "cate_distribution", "reason": "Show predicted treatment-effect distributions by meta-learner."})
-        chart_plan.append({"chart": "cate_method_scatter", "reason": "Show agreement between meta-learner CATE estimates."})
+        chart_plan.append({"chart": "cate_distribution", "reason": _zh_reason("Show predicted treatment-effect distributions by meta-learner.")})
+        chart_plan.append({"chart": "cate_method_scatter", "reason": _zh_reason("Show agreement between meta-learner CATE estimates.")})
     if task == "causal":
-        chart_plan.append({"chart": "causal_method_bundle", "reason": "Show the method-specific artifacts for DID, RD, synthetic control, IV, DML, DR, PSM, orthogonal learners, uplift, and CATE."})
+        chart_plan.append({"chart": "causal_method_bundle", "reason": _zh_reason("Show the method-specific artifacts for DID, RD, synthetic control, IV, DML, DR, PSM, orthogonal learners, uplift, and CATE.")})
     if task in {"experiment", "ab-test"} and config:
         group_col = config.get("group_col")
         metrics = config.get("metrics", [])
@@ -79,7 +126,7 @@ def select_chart_plan(df, task: str, target: str | None = None, time_col: str | 
             first_metric = metrics[0]
             primary_metric = first_metric.get("name") if isinstance(first_metric, dict) else first_metric
         if group_col and primary_metric:
-            chart_plan.append({"chart": "variant_comparison_bar", "x": group_col, "y": primary_metric, "reason": "Compare the primary metric between control and treatment."})
+            chart_plan.append({"chart": "variant_comparison_bar", "x": group_col, "y": primary_metric, "reason": _zh_reason("Compare the primary metric between control and treatment.")})
     return {"task": task, "charts": chart_plan}
 
 
@@ -95,6 +142,105 @@ def _configure_chinese_font():
         "Arial Unicode MS",
     ]
     return configure_matplotlib_defaults(preferred_fonts)
+
+
+def _chart_entry_for_file(file_name: str, task: str, target: str | None = None, time_col: str | None = None, config: dict[str, Any] | None = None) -> dict[str, Any]:
+    if file_name == "time_series.png":
+        return {
+            "file": file_name,
+            "chart": "line",
+            "title": "时间趋势图",
+            "how_to_read": "先看整体趋势方向，再看拐点、波动和异常。",
+            "meaning": "帮助识别目标变量在时间维度上的变化节奏与异常波动。",
+        }
+    if file_name == "target_distribution.png":
+        label = friendly_chart_target_label(target)
+        return {
+            "file": file_name,
+            "chart": "histogram",
+            "title": f"{label}分布图",
+            "how_to_read": "先看正负样本或各取值是否失衡，再看分布是否偏斜。",
+            "meaning": "帮助判断目标变量的分布形态，以及后续模型是否需要重点关注类别不平衡。",
+        }
+    if file_name == "shap_bar.png":
+        return {
+            "file": file_name,
+            "chart": "feature_importance",
+            "title": "SHAP 特征重要性图",
+            "how_to_read": "条形越长，表示该变量对模型预测的平均影响越强。",
+            "meaning": "说明模型最依赖哪些变量，但不代表这些变量具有因果作用。",
+        }
+    if file_name.startswith("pdp_") and file_name.endswith(".png"):
+        feature_name = file_name.removeprefix("pdp_").removesuffix(".png")
+        return {
+            "file": file_name,
+            "chart": "partial_dependence",
+            "title": f"{friendly_chart_feature_label(feature_name)}部分依赖图",
+            "how_to_read": "观察特征变化时模型预测均值如何变化，以及变化是否平缓或突然。",
+            "meaning": f"帮助理解 {friendly_chart_feature_label(feature_name)} 在模型中的边际影响。",
+        }
+    if file_name == "experiment_primary_metric.png":
+        return {
+            "file": file_name,
+            "chart": "bar",
+            "title": "实验主指标对比图",
+            "how_to_read": "比较对照组和实验组在主指标上的平均值差异。",
+            "meaning": "帮助判断实验组是否在核心指标上形成了可见提升。",
+        }
+    if file_name == "cohort_heatmap.png":
+        return {
+            "file": file_name,
+            "chart": "heatmap",
+            "title": "留存热力图",
+            "how_to_read": "先看每一行 cohort 的衰减速度，再看不同 cohort 之间的差异。",
+            "meaning": "帮助判断不同 cohort 的留存质量与衰减节奏。",
+        }
+    if file_name == "cohort_ltv.png":
+        return {
+            "file": file_name,
+            "chart": "bar",
+            "title": "Cohort LTV 对比图",
+            "how_to_read": "比较不同 cohort 的生命周期价值高低。",
+            "meaning": "帮助识别哪些 cohort 的长期价值更高。",
+        }
+    if file_name == "retention_curve.png":
+        return {
+            "file": file_name,
+            "chart": "line",
+            "title": "留存曲线图",
+            "how_to_read": "看留存随时间的衰减斜率和拐点。",
+            "meaning": "帮助理解用户留存的持续性和流失节奏。",
+        }
+    if file_name == "correlation_heatmap.png":
+        return {
+            "file": file_name,
+            "chart": "heatmap",
+            "title": "相关性热力图",
+            "how_to_read": "先看颜色最深的格子，再看变量之间是否存在明显同向或反向关系。",
+            "meaning": "帮助快速识别数值变量之间的线性关系。",
+        }
+    title = file_name.replace("_", " ").replace(".png", "")
+    return {
+        "file": file_name,
+        "chart": "chart",
+        "title": title,
+        "how_to_read": "先看整体结构，再结合对应指标理解差异来源。",
+        "meaning": "帮助补充展示本次分析产物。",
+    }
+
+
+def _render_chart_plan(output_dir: Path, plan: dict[str, Any], target: str | None = None, time_col: str | None = None, config: dict[str, Any] | None = None) -> dict[str, Any]:
+    png_files = sorted(path.name for path in output_dir.glob("*.png"))
+    rendered_charts = []
+    for file_name in png_files:
+        rendered_charts.append(_chart_entry_for_file(file_name, task=plan.get("task", "analysis"), target=target, time_col=time_col, config=config))
+    return {
+        "rendered": True,
+        "task": plan.get("task"),
+        "charts": rendered_charts,
+        "planned_charts": plan.get("charts", []),
+        "artifacts": png_files,
+    }
 
 
 def save_basic_charts(df, output_dir: Path, task: str, target: str | None = None, time_col: str | None = None, config: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -253,17 +399,17 @@ def save_basic_charts(df, output_dir: Path, task: str, target: str | None = None
             plt.close(fig)
             artifacts.append(str(path))
 
-    write_json(output_dir / "chart_plan.json", {"rendered": True, "font": font_name, **plan})
+    write_json(output_dir / "chart_plan.json", {"rendered": True, "font": font_name, **_render_chart_plan(output_dir, plan, target=target, time_col=time_col, config=config)})
     return {"rendered": True, "font": font_name, "artifacts": artifacts}
 
 
 def build_storyline(findings: list[str], risks: list[str], recommendations: list[str]) -> str:
-    lines = ["## Context", "- Explain why the question matters.", "", "## Insight"]
-    lines.extend(f"- {item}" for item in findings or ["No findings were generated."])
+    lines = ["## 背景", "- 说明这次分析要回答什么问题，以及为什么它重要。", "", "## 发现"]
+    lines.extend(f"- {item}" for item in findings or ["当前没有生成可用发现。"])
     lines.append("")
-    lines.append("## Recommendation")
-    lines.extend(f"- {item}" for item in recommendations or ["No recommendation generated yet."])
+    lines.append("## 建议")
+    lines.extend(f"- {item}" for item in recommendations or ["当前还没有生成可执行建议。"])
     lines.append("")
-    lines.append("## Risk")
-    lines.extend(f"- {item}" for item in risks or ["State data quality, causality, or generalization limits here."])
+    lines.append("## 风险")
+    lines.extend(f"- {item}" for item in risks or ["请说明数据质量、因果识别或泛化范围上的限制。"])
     return "\n".join(lines)

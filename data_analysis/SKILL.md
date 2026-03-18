@@ -20,9 +20,19 @@ python3 scripts/run_pipeline.py --help
 - 推荐使用 `python3.13`，但下面所有命令默认都写成 `python3`，方便在其他机器上直接运行。
 - 如果需要高级模型、交互式仪表盘或额外数据库驱动，再安装 `requirements-optional.txt`。
 - 默认运行产物会写入 `outputs/`。
+- `--output-dir` 语义：默认把它当作“输出根目录”，脚本会自动创建时间戳运行目录；如果你传入的路径本身已经是 `data-analysis-YYYYMMDD-HHMMSS` 这种运行目录名，脚本会直接复用，避免再嵌套一层。
+- 长任务监控：`run_pipeline.py` 运行中会持续更新 `<run_dir>/run_status.json`（阶段、时间、任务类型），用于判断是“仍在计算”还是“异常退出”。
 - 仓库中的 `assets/` 与 `outputs/` 默认只保留空目录占位，本地数据和运行结果不作为仓库内容提交。
 
 ## 工作流
+
+任务启动前先做一次口径确认：
+- 先告诉用户全量数据行数、默认样本数，以及抽样方法；默认样本建议为 `5000` 行，抽样方法默认使用 `simple random sample`，必要时再说明可切换为分层抽样。
+- 如果有目标变量，先确认任务类型：二分类/多分类目标（例如 0/1 标签）优先显式传 `--task classification`，连续数值目标传 `--task regression`。不要把任务类型完全交给默认推断。
+- 让用户明确选择“样本”还是“全量”。
+- 在跑模型前，先用文字汇报已经完成了什么、初步结果大概怎样、推荐继续用哪些模型（至少给出 2-4 个候选）以及每个候选的推荐原因、预计还要多久，并明确询问是否继续。
+- 对于分类/回归建模，若“推荐模型+推荐原因”未生成或不完整，流程应直接阻断，不得进入建模阶段（可检查 `pre_model_gate.json`）。
+- 如果用户说不继续，就基于已完成内容导出报告，并截断后续尚未执行的章节。
 
 1. 先定义分析问题，再碰数据。  
    使用 [references/workflow.md](references/workflow.md) 明确分析目标、分析单元、核心指标、时间窗口、业务背景和成功标准。
@@ -58,15 +68,16 @@ python3 scripts/run_pipeline.py --help
    再用 `scripts/explain_viz.py` 与 [references/chart-selection.md](references/chart-selection.md) 组织成 `背景 -> 发现 -> 建议 -> 风险` 的表达，而不是只丢指标。
 
 9. 运行结束后导出可复核报告。  
-   使用 `scripts/report_export.py` 和 [references/reporting.md](references/reporting.md) 生成 `report_dashboard.html`。  
+   使用 `scripts/report_export.py` 和 [references/reporting.md](references/reporting.md) 生成结果导向的 `report_dashboard.html`。  
+   同时使用 `scripts/full_process_report_export.py` 生成全流程追踪的 `report_process.html`（数据读取、缺失值、异常值、EDA、建模、图表、结论）。  
    再用 `scripts/report_index.py` 刷新 `outputs/` 下的 `run_index.html`、`run_index.json` 和各任务对比页。  
    如果需要交互式浏览，可运行 `streamlit run scripts/streamlit_dashboard.py -- --outputs-root <outputs_dir>`。
 
 10. 如果用户要正式中文报告，再走报告导出链。  
     先读 [references/report-artifact-interpretation-zh.md](references/report-artifact-interpretation-zh.md) 与 [references/report-delivery-templates-zh.md](references/report-delivery-templates-zh.md)。  
     然后根据交付物选择 [templates/analysis-report-docx-template.md](templates/analysis-report-docx-template.md) 或 [templates/analysis-report-pdf-template.md](templates/analysis-report-pdf-template.md)。  
-    若要一键在分析完成后同时产出 HTML + DOCX + PDF，可直接运行：  
-    `python3 scripts/run_pipeline.py ... --formal-report --report-title "..."`
+    若要一键在分析完成后同时产出 Dashboard HTML + Process HTML + DOCX + PDF，可直接运行：  
+    `python3 scripts/run_pipeline.py ... --formal-report --report-title "..."`  
     
     正式报告里的图表解读必须做二次视觉复核，不能停留在脚本导出的首稿：
     - 第一步：先运行 `python3 scripts/formal_report_export.py --run-dir <run_dir>` 生成排版稳定的首稿 DOCX / PDF，以及 `formal_report_draft.md` 和 `report_context.json`。
@@ -81,7 +92,9 @@ python3 scripts/run_pipeline.py --help
     - 如果图里出现英文指标、英文图例、英文坐标、缩写，或者中文专业名词对基础读者有理解门槛，要在图下注释补一行简短解释，例如“Accuracy（准确率）”“轮廓系数（衡量聚类是否分得清楚的指标）”。
     - 在所有单图解读之后，再补一段“图表总体解读”，用一段完整中文把几张图串起来，说明整体情况和背后意义。
     - 回填时不要直接改 DOCX / PDF 版式；应把 `chart_review.json` 作为参数传回 `python3 scripts/formal_report_export.py --run-dir <run_dir> --chart-review-json <path>`，由脚本把文字放回正式报告对应位置。
+    - 如果 run 目录里已经存在由主流程生成的高质量 `chart_review.json`（`status=provided/final`），`formal_report_export.py` 会自动复用；但只要要交付“正式版”，仍建议做一次人工二次复核并显式回填。
     - 如果脚本首稿里的图表说明仍是泛化句、占位句、或“怎么看 / 本图结论”结构，agent 必须重写后再交付。
+    - 如果用户在跑模前或跑模中明确表示“不继续了”，就导出当前已完成部分的报告，并把后续尚未执行的建模、解释和结论章节省略或截断，且把该报告标记为草稿或部分完成。
 
 11. 本地数据不足时，再启用外部研究。  
     使用 [references/web-research-rules.md](references/web-research-rules.md) 与 `scripts/source_research_adapter.py`。  
@@ -127,6 +140,7 @@ python3 scripts/run_pipeline.py --help
 - `scripts/evaluate.py`：评估指标、交叉验证与验证策略
 - `scripts/explain_viz.py`：图表规划和可视化输出
 - `scripts/report_export.py`：导出静态 HTML Dashboard
+- `scripts/full_process_report_export.py`：导出全流程 HTML 报告（report_process.html）
 - `scripts/formal_report_export.py`：导出正式中文 DOCX / PDF 报告
 - `scripts/wdi_analysis_report.py`：WDI 数据集专用适配器
 - `scripts/report_index.py`：导出多次运行的静态索引与比较页

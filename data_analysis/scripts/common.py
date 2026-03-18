@@ -311,9 +311,23 @@ def slugify(value: str) -> str:
     return normalized or "run"
 
 
+def _looks_like_run_dir(path: Path, prefix: str) -> bool:
+    """
+    Detect whether a user-provided path already looks like a concrete run directory,
+    e.g. data-analysis-20260318-201049.
+    """
+    pattern = re.compile(rf"^{re.escape(prefix)}-\d{{8}}-\d{{6}}$")
+    return bool(pattern.match(path.name))
+
+
 def ensure_output_dir(base_dir: str | None = None, prefix: str = "analysis") -> Path:
     root = Path(base_dir) if base_dir else Path.cwd() / "outputs"
     root.mkdir(parents=True, exist_ok=True)
+
+    # If callers already pass a concrete run dir, reuse it instead of nesting.
+    if base_dir and _looks_like_run_dir(root, prefix):
+        return root
+
     run_dir = root / f"{prefix}-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
     run_dir.mkdir(parents=True, exist_ok=True)
     return run_dir

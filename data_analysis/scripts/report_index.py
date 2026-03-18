@@ -397,6 +397,7 @@ def summarize_run(outputs_root: Path, run_dir: Path) -> dict[str, Any]:
         "key_metric": _key_metric(context),
         "compare_fields": _extract_compare_fields(task, context),
         "dashboard_path": str((run_dir / "report_dashboard.html").relative_to(outputs_root)) if (run_dir / "report_dashboard.html").exists() else None,
+        "process_report_path": str((run_dir / "report_process.html").relative_to(outputs_root)) if (run_dir / "report_process.html").exists() else None,
         "run_summary_path": str((run_dir / "run_summary.md").relative_to(outputs_root)) if (run_dir / "run_summary.md").exists() else None,
         "causal_narrative_path": str((run_dir / "causal_narrative_report.md").relative_to(outputs_root)) if (run_dir / "causal_narrative_report.md").exists() else None,
         "decision_status": experiment.get("decision", {}).get("status"),
@@ -501,6 +502,11 @@ def _render_runs_table(index: dict[str, Any]) -> str:
             if run.get("dashboard_path")
             else "-"
         )
+        process_link = (
+            f'<a href="{_escape(run["process_report_path"])}">process</a>'
+            if run.get("process_report_path")
+            else "-"
+        )
         narrative_link = (
             f'<a href="{_escape(run["causal_narrative_path"])}">narrative</a>'
             if run.get("causal_narrative_path")
@@ -521,7 +527,7 @@ def _render_runs_table(index: dict[str, Any]) -> str:
               <td>{_escape(run['charts'])}</td>
               <td>{_escape(run['key_metric'])}</td>
               <td>{_escape(run['summary'])}</td>
-              <td>{dashboard_link} · {narrative_link} · {summary_link}</td>
+              <td>{dashboard_link} · {process_link} · {narrative_link} · {summary_link}</td>
             </tr>
             """
         )
@@ -651,6 +657,11 @@ def _comparison_page_html(task: str, runs: list[dict[str, Any]], outputs_root: P
             if run.get("dashboard_path")
             else "-"
         )
+        process_link = (
+            f'<a href="../{_escape(run["process_report_path"])}">process</a>'
+            if run.get("process_report_path")
+            else "-"
+        )
         narrative_link = (
             f'<a href="../{_escape(run["causal_narrative_path"])}">narrative</a>'
             if run.get("causal_narrative_path")
@@ -670,7 +681,7 @@ def _comparison_page_html(task: str, runs: list[dict[str, Any]], outputs_root: P
               <td>{_escape(run['rows'] if run['rows'] is not None else 'N/A')}</td>
               {dynamic_cells}
               <td>{_escape(run['summary'])}</td>
-              <td>{dashboard_link} · {narrative_link} · {summary_link}</td>
+              <td>{dashboard_link} · {process_link} · {narrative_link} · {summary_link}</td>
             </tr>
             """
         )
