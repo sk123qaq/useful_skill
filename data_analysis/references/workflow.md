@@ -24,9 +24,16 @@ Prefer to save these artifacts per run:
 - `data_profile.json`
 - `cleaning_report.json`
 - `stats_report.json`
+- `semantic_schema.json`
+- `feature_lineage.json`
 - `model_report.json`
 - `chart_plan.json`
+- `chart_candidates.json`
 - `business_report.json`
+
+For formal report workflows, also prefer:
+
+- `report_chart_decision.json`
 
 ## Quality Gates
 
@@ -38,6 +45,13 @@ Do not advance to modeling until:
 - duplicates are checked
 - time leakage risks are reviewed for temporal tasks
 - units and currency are confirmed for financial or business metrics
+
+For formal report正文 charts, do not advance to final export until:
+
+- the intended audience is explicit
+- chart candidates can be traced back to raw fields or explicit model-evidence objects
+- diagnostic-only charts are separated from body-eligible charts
+- the body chart set is selected from governed candidates rather than arbitrary PNG discovery
 
 ## Failure Conditions
 

@@ -1,0 +1,16 @@
+{
+  "actions": [
+    "Stop before report export.",
+    "Treat this run as evidence of limited signal, not a usable model.",
+    "Require cleaning and a stronger modeling cycle before any formal report."
+  ],
+  "decision": "stop_as_not_usable",
+  "reasons": [
+    "Best model improves accuracy by only about 0.029 over the dummy baseline.",
+    "Duplicate rows remain untreated in the modeling input.",
+    "The feature set is still the raw all-non-target set rather than an agent-reviewed modeling set.",
+    "No tuning, threshold analysis, calibration, or cost-sensitive evaluation has been performed."
+  ],
+  "stage": "after_baseline",
+  "summary": "Do not continue to reporting. The model shows some signal, but the uplift over baseline is too small for business usefulness, and the pipeline has not yet applied de-duplication, deliberate feature selection, or tuning."
+}

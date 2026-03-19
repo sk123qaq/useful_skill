@@ -1,0 +1,12 @@
+{
+  "blockers": [],
+  "next_actions": [
+    "Run the baseline ladder.",
+    "Stop at checkpoint unless explicit continue flag is set."
+  ],
+  "reasons": [
+    "Target is defined and the request is predictive."
+  ],
+  "route": "predictive",
+  "suggested_task_type": "classification"
+}

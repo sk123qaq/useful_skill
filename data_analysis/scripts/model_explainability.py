@@ -64,6 +64,11 @@ def _coerce_numeric_matrix(frame: pd.DataFrame) -> pd.DataFrame:
     return frame.astype(float)
 
 
+def _is_binary_indicator(series: pd.Series) -> bool:
+    unique_values = sorted(series.dropna().unique().tolist())
+    return bool(unique_values) and set(unique_values).issubset({0.0, 1.0}) and len(unique_values) <= 2
+
+
 def _choose_pdp_features(X_train: pd.DataFrame, ranked_features: list[str], limit: int = 3) -> list[str]:
     selected: list[str] = []
     fallback: list[str] = []
@@ -89,6 +94,46 @@ def _choose_pdp_features(X_train: pd.DataFrame, ranked_features: list[str], limi
             if len(selected) >= limit:
                 break
     return selected[:limit]
+
+
+def _partial_dependence_curve(model, X_numeric: pd.DataFrame, feature: str) -> tuple[np.ndarray, np.ndarray]:
+    from sklearn.inspection import partial_dependence
+
+    result = partial_dependence(model, X_numeric, [feature])
+    average = np.asarray(result["average"][0], dtype=float)
+    values = result.get("grid_values")
+    if values is None:
+        values = result.get("values")
+    if values is None:
+        raise ValueError("partial_dependence result missing grid values")
+    grid = np.asarray(values[0], dtype=float)
+    return grid, average
+
+
+def _save_binary_partial_dependence_plot(model, X_numeric: pd.DataFrame, feature: str, output_dir: Path) -> str:
+    import matplotlib.pyplot as plt  # type: ignore
+
+    grid, average = _partial_dependence_curve(model, X_numeric, feature)
+    fig, ax = plt.subplots(figsize=(6.8, 5))
+    display_label = friendly_chart_feature_label(feature)
+    positions = np.arange(len(grid))
+    ax.bar(positions, average, width=0.55, color=["#5B8FF9", "#5AD8A6"][: len(positions)], edgecolor="#3D4A57")
+    for index, value in enumerate(average):
+        ax.text(index, value, f"{value:.3f}", ha="center", va="bottom", fontsize=10)
+    ax.set_title(f"{display_label}部分依赖图")
+    ax.set_xlabel(display_label)
+    ax.set_ylabel("模型预测变化")
+    ax.set_xticks(positions)
+    if set(grid.tolist()).issubset({0.0, 1.0}):
+        ax.set_xticklabels(["否", "是"][: len(positions)])
+    else:
+        ax.set_xticklabels([str(item) for item in grid.tolist()])
+    ax.grid(axis="y", linestyle="--", alpha=0.25)
+    path = output_dir / f"pdp_{feature}.png"
+    fig.tight_layout()
+    fig.savefig(path, dpi=150)
+    plt.close(fig)
+    return str(path)
 
 
 def shap_feature_importance(model, X_sample, output_dir: Path, top_n: int = 15) -> dict[str, Any]:
@@ -143,6 +188,9 @@ def save_partial_dependence_plots(model, X_train, features: list[str], output_di
     artifacts = []
     X_numeric = _coerce_numeric_matrix(X_train)
     for feature in features:
+        if _is_binary_indicator(X_numeric[feature]):
+            artifacts.append(_save_binary_partial_dependence_plot(model, X_numeric, feature, output_dir))
+            continue
         fig, ax = plt.subplots(figsize=(7, 5))
         display = PartialDependenceDisplay.from_estimator(model, X_numeric, [feature], ax=ax)
         plot_ax = display.axes_[0, 0] if getattr(display, "axes_", None) is not None else ax
@@ -150,10 +198,6 @@ def save_partial_dependence_plots(model, X_train, features: list[str], output_di
         plot_ax.set_title(f"{display_label}部分依赖图")
         plot_ax.set_xlabel(display_label)
         plot_ax.set_ylabel("模型预测变化")
-        unique_values = sorted(X_numeric[feature].dropna().unique().tolist())
-        if set(unique_values).issubset({0.0, 1.0}) and len(unique_values) <= 2:
-            plot_ax.set_xticks([0, 1])
-            plot_ax.set_xticklabels(["否", "是"])
         path = output_dir / f"pdp_{feature}.png"
         fig.tight_layout()
         fig.savefig(path, dpi=150)

@@ -19,6 +19,12 @@ Before a supervised analysis run starts, first confirm with the user:
 - Which sampling method will be used, with `simple random sample` as the default unless the task calls for stratified sampling.
 - What has already been completed, what the preliminary results look like, which 2-4 models are recommended next, why each model is recommended, and how long the next stage is expected to take.
 
+The generic pipeline now enforces these expectations in code:
+
+- Pass `--data-scope sample` or `--data-scope full` explicitly before loading data.
+- For supervised classification/regression runs, the default behavior is to stop at the pre-model checkpoint and wait for an explicit rerun with `--continue-after-checkpoint`.
+- The checkpoint writes `pre_model_recommendation.json`, `pre_model_recommendation.md`, `pre_model_checkpoint_summary.md`, and `pre_model_gate.json`.
+
 If the user says to stop after that checkpoint, export a partial report from the completed artifacts only and omit later sections that were not executed. Mark that output as `draft` or `partial`.
 For supervised classification/regression runs, the pipeline should fail fast before modeling if model recommendations or their reasons are missing; see `pre_model_gate.json`.
 
@@ -28,7 +34,11 @@ The exporter is designed to read whatever exists in a run directory and degrade 
 
 - `run_summary.md`
 - `cleaning_report.json`
+- `semantic_schema.json`
+- `feature_lineage.json`
 - `chart_plan.json`
+- `chart_candidates.json`
+- `report_chart_decision.json`
 - `model_report.json`
 - `explainability_report.json`
 - `business_report.json`
@@ -70,17 +80,25 @@ Use this workflow when the user asks for a formal report deliverable instead of,
 1. Finish the normal analysis run and keep all JSON / PNG / Markdown artifacts in the run directory.
 2. Read `references/report-artifact-interpretation-zh.md` so the narrative uses the same metric meanings and chart-reading rules as the skill.
 3. Run `python3 scripts/formal_report_export.py --run-dir <run_dir>` to generate the first-draft DOCX / PDF, plus `formal_report_draft.md`, `report_context.json`, and `formal_report_validation.json`.
-4. Treat the first export as `draft`: the report should state that the chart interpretation still needs second-pass review.
-5. Ask the agent to read `report_context.json` and the PNG charts, then write a structured `chart_review.json` with one object per chart plus an `overall_summary`.
-6. Re-run `python3 scripts/formal_report_export.py --run-dir <run_dir> --chart-review-json <path>` so the script deterministically fills the reviewed chart text back into the fixed layout and marks the report as `final`.
-7. If the analysis itself is being launched from scratch, prefer `python3 scripts/run_pipeline.py ... --formal-report --report-title "..."` for the first-draft export, then do the `chart_review.json` handoff as a second pass.
-8. The validation file checks not only file existence, but also paragraph/text extraction, embedded images, stale-output risk, Markdown leakage, obvious raw technical identifiers, and whether the report is still `draft` or already `final`.
-9. In both DOCX and PDF outputs, require:
+4. Treat the first export as `draft`: the report should state that both body-chart selection and chart interpretation still need second-pass review, and the chart section should not contain script-generated placeholder analysis.
+5. Ask the agent to read `report_context.json`, `chart_candidates.json`, and the PNG charts, then write a structured `report_chart_decision.json` that records:
+   - which eligible charts enter正文
+   - in what order
+   - for which audience
+   - why each chart belongs in正文
+6. If the agent already completed chart reading, it may also place per-chart `interpretation` / `implication` / `caption_note` and an `overall_summary` directly inside `report_chart_decision.json`.
+7. Otherwise, ask the agent to write a structured `chart_review.json` with one object per chart plus an `overall_summary`, using the governed body-chart set as its input.
+8. Re-run `python3 scripts/formal_report_export.py --run-dir <run_dir> --report-chart-decision-json <path> --chart-review-json <path>` for the fully explicit handoff.
+9. For a lighter second pass, `formal_report_export.py` can also derive final chart prose from `report_chart_decision.json` when that artifact already contains complete per-chart interpretation and overall summary.
+10. `formal_report_export.py` no longer auto-reuses any existing `chart_review.json`; without an explicit second-pass handoff, the report must remain `draft`.
+11. If the analysis itself is being launched from scratch, prefer `python3 scripts/run_pipeline.py ... --data-scope sample --sample-rows 5000 --formal-report --report-title "..."` or `--data-scope full --formal-report --report-title "..."` for the first-draft export, then do the governed second pass.
+12. The validation file checks not only file existence, but also paragraph/text extraction, embedded images, stale-output risk, Markdown leakage, obvious raw technical identifiers, report draft/final state, and whether selected body charts violate governed candidate constraints.
+13. In both DOCX and PDF outputs, require:
    - short plain-language explanations for technical terms
    - explicit guidance on whether each key metric looks good, weak, or inconclusive
    - per-chart natural-language interpretation, implication, and Chinese caption note populated from `chart_review.json`
-10. After export, read the generated DOCX or PDF again and do a quality pass. Check for raw feature ids, raw model ids, literal Markdown syntax, fragmented bullets, stale old content, unexplained metrics, and any lingering draft-stage wording in the final version. Revise and re-export if needed.
-11. Prefer the dashboard as a review layer, but build the formal report from the raw artifacts rather than copying dashboard text blindly.
+14. After export, read the generated DOCX or PDF again and do a quality pass. Check for raw feature ids, raw model ids, literal Markdown syntax, fragmented bullets, stale old content, unexplained metrics, lingering draft-stage wording, and any chart that looks diagnostic-only but still entered正文. Revise and re-export if needed.
+15. Prefer the dashboard as a review layer, but build the formal report from the raw artifacts rather than copying dashboard text blindly.
 
 ## Public Dataset Adapters
 
@@ -106,4 +124,9 @@ The WDI adapter handles wide-to-long transformation, aggregate filtering, recent
 - when describing a value as good or bad, anchor the judgment to a baseline, threshold, or business context
 - normalize one-hot feature ids, model ids, and categorical code values into business-readable Chinese before they appear in formal reports
 - when summarizing explainability, prefer variable dimensions such as “糖尿病状态” or “自评健康” over sparse encoded features
+- do not auto-generate chart interpretation paragraphs from filenames, chart types, or deterministic templates; only explicit agent second-pass review can move the report to `final`
+- formal report正文 charts should be chosen from governed candidates with audience-aware constraints, not from arbitrary PNG discovery
+- audience-first governance means the same run may legitimately pick different正文图 for `management`, `operator`, or `analyst`, but all diversity must stay inside the eligible candidate pool
+- prefer raw-field semantics over encoded features: if a model uses one-hot columns internally, formal reporting should still reason at the original business-field level whenever possible
+- diagnostic-only charts may remain visible in dashboards or full-process reports, but they should not silently leak into formal report正文
 - exporters should write to a temporary file and replace the final path atomically so repeated exports do not retain stale sections

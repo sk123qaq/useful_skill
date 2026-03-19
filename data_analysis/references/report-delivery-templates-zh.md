@@ -27,12 +27,18 @@
 
 1. 先完成正常 `run_pipeline`，拿到 JSON、PNG、Markdown 原始产物
 2. 读取 [report-artifact-interpretation-zh.md](report-artifact-interpretation-zh.md)
-3. 先运行 `python3 scripts/formal_report_export.py --run-dir <run_dir>` 生成首稿 DOCX / PDF，并同时产出 `formal_report_draft.md` 与 `report_context.json`
-4. 首稿生成后，agent 必须重新阅读 `report_context.json`、整份报告和对应 PNG，一起做一轮视觉复核
-5. 基于这轮视觉复核，为每张图补写详细图表解读，并把结果输出为结构化 `chart_review.json`
-6. 再运行 `python3 scripts/formal_report_export.py --run-dir <run_dir> --chart-review-json <path>`，由脚本把 `chart_review.json` 回填到固定版式 DOCX / PDF
-7. 如需 `.docx`，以脚本导出的 Word 文档作为正式可编辑版本
-8. 如需 `.pdf`，优先基于同一份回填内容导出固定版式 PDF
+3. 先运行 `python3 scripts/formal_report_export.py --run-dir <run_dir>` 生成首稿 DOCX / PDF，并同时产出 `formal_report_draft.md`、`report_context.json` 与正文图草稿决策文件
+4. 首稿生成后，agent 必须重新阅读 `report_context.json`、`chart_candidates.json`、整份报告和对应 PNG，一起做一轮视觉复核
+5. 基于这轮视觉复核，先回填结构化 `report_chart_decision.json`：
+   - 选哪些图进入正文
+   - 顺序如何安排
+   - 当前服务哪个受众（如 `management` / `operator` / `analyst`）
+   - 每张图为什么应该留在正文
+6. 如果这轮已经完成逐图解读，可在 `report_chart_decision.json` 中直接补写 `interpretation`、`implication`、`caption_note` 与 `overall_summary`
+7. 如果正文图已经选定，但逐图解读还没写完，再额外输出结构化 `chart_review.json`
+8. 再运行 `python3 scripts/formal_report_export.py --run-dir <run_dir> --report-chart-decision-json <path> [--chart-review-json <path>]`，由脚本把治理后的正文图与图表解读回填到固定版式 DOCX / PDF
+9. 首稿阶段不再允许脚本自动生成图表解读文案；没有显式二次回写时，报告必须保持 `draft`
+10. 完成二次回填后，如需 `.docx`，以脚本导出的 Word 文档作为正式可编辑版本；如需 `.pdf`，优先基于同一份回填内容导出固定版式 PDF
 
 推荐默认路径：
 
@@ -135,6 +141,10 @@
 - 如果图中出现英文指标、英文图例、英文坐标、英文缩写，或中文专业名词对基础读者有理解门槛，图下注释必须补充简短解释
 - 多张图之后必须追加一段“图表总体解读”，把整组图的共同信息串起来
 - 图表解读内容应由 agent 产出 `chart_review.json`，再由脚本回填；不要直接手改最终 DOCX / PDF 版式
+- 首稿图表区只保留图片与“待回写”提示，不得再出现由文件名、图表类型或脚本规则拼出来的模板句
+- 正文图是否入选，必须优先由 `report_chart_decision.json` 决定；不要默认把所有 PNG 都当成正文图
+- `diagnostic_only=true` 或 `allow_in_formal_body=false` 的候选图默认只能留在过程报告、dashboard 或附录，不应直接进入正文
+- 对 one-hot 派生图、单个 dummy 变量图、明显偏技术诊断的图，优先回溯到原始业务字段再决定正文表达方式
 
 ## DOCX 与 PDF 的差异化要求
 
@@ -171,6 +181,9 @@
 - 默认引用 run 目录中的原始 JSON / PNG / Markdown
 - 不得只复制 dashboard 文本，必须结合原始产物重新组织
 - 图表章节必须在首稿后再做一次视觉复核，再回填逐图解读和总体解读
+- 没有 `--chart-review-json` 的显式二次回写时，正式导出只能停留在 `draft`
+- 没有 `--report-chart-decision-json` 的显式二次回写时，正式导出会保留治理层默认草稿选图，不应视为已完成正文图定稿
 - 图表章节不得保留“怎么看”“本图结论”这类模板化占位语
 - `chart_review.json` 中每张图至少包含 `file`、`title`、`interpretation`、`implication`、`caption_note`
+- `report_chart_decision.json` 中每张正文图至少应包含 `chart_id` 或 `file`，并说明 `selection_rationale`
 - 当前正式导出默认在“图表总体解读”后结束，不再单独追加“业务解释与建议”“名词解释”“原始产物清单”等尾部章节

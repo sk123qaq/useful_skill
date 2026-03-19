@@ -1,0 +1,98 @@
+{
+  "dataset_overview": {
+    "column_count": 18,
+    "duplicate_rate": 0.007283,
+    "duplicate_rows": 437,
+    "row_count": 60000,
+    "target_distribution": {
+      "available": true,
+      "top_counts": {
+        "0": 39656,
+        "1": 20344
+      },
+      "unique_values": 2
+    }
+  },
+  "decision_prompt": "Judge from the whole analysis so far. Decide whether to continue to report, request more modeling/tuning, or stop as not usable.",
+  "feature_summary": {
+    "candidate_feature_count": 17,
+    "risk_counts": {
+      "safe": 15,
+      "soft_proxy": 2
+    },
+    "soft_proxy_features": [
+      "physical_unhealthy_days_bucket",
+      "mental_unhealthy_days_bucket"
+    ]
+  },
+  "global_assessment": [
+    "Baseline comparison: best model `logistic_regression` improved accuracy by 0.0291 over `dummy_most_frequent`.",
+    "Stability snapshot: best model `accuracy` std is 0.0049.",
+    "Duplicate rows are still present (437); no de-duplication has been applied before modeling.",
+    "Soft proxy fields remain in the candidate set: physical_unhealthy_days_bucket, mental_unhealthy_days_bucket",
+    "No hyperparameter tuning, threshold optimization, or additional feature selection has been applied yet."
+  ],
+  "model_summary": {
+    "absolute_improvement": 0.02908333333333335,
+    "all_models": [
+      {
+        "family": "dummy",
+        "mean_metrics": {
+          "accuracy": 0.6609333333333334,
+          "f1_macro": 0.3979288750886525
+        },
+        "model_name": "dummy_most_frequent",
+        "std_metrics": {
+          "accuracy": 3.333333333332966e-05,
+          "f1_macro": 1.2082624246900764e-05
+        }
+      },
+      {
+        "family": "linear",
+        "mean_metrics": {
+          "accuracy": 0.6900166666666667,
+          "f1_macro": 0.5905830130185421
+        },
+        "model_name": "logistic_regression",
+        "std_metrics": {
+          "accuracy": 0.004858383361663494,
+          "f1_macro": 0.005670387456116234
+        }
+      },
+      {
+        "family": "tree",
+        "mean_metrics": {
+          "accuracy": 0.6746833333333333,
+          "f1_macro": 0.5789408102176482
+        },
+        "model_name": "random_forest_classifier",
+        "std_metrics": {
+          "accuracy": 0.004390456822599548,
+          "f1_macro": 0.005849731592134857
+        }
+      }
+    ],
+    "best_dummy_mean": 0.6609333333333334,
+    "best_dummy_name": "dummy_most_frequent",
+    "best_model_mean": 0.6900166666666667,
+    "best_model_name": "logistic_regression",
+    "best_model_std": 0.004858383361663494,
+    "model_order": [
+      "dummy_most_frequent",
+      "logistic_regression",
+      "random_forest_classifier"
+    ],
+    "primary_metric": "accuracy"
+  },
+  "question": "Predict obesity risk from BRFSS survey features and let the agent decide from full analysis findings at each checkpoint.",
+  "route_summary": {
+    "blockers": [],
+    "reasons": [
+      "Target is defined and the request is predictive."
+    ],
+    "route": "predictive"
+  },
+  "stage": "after_baseline",
+  "target": "obese",
+  "task": "classification"
+}

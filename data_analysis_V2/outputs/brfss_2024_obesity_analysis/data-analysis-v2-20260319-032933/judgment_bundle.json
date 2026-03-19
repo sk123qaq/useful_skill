@@ -1,0 +1,10 @@
+{
+  "allowed_report_mode": "report-ready",
+  "evidence_grade": "report-ready",
+  "narrative_guardrails": [
+    "Do not turn predictive features into causal recommendations.",
+    "Do not exceed the maximum evidence grade.",
+    "State blockers plainly when the run is exploratory or not usable."
+  ],
+  "safe_summary": "Predictive signal cleared the configured gates and can be reported with evidence-safe language. Best model observed: logistic_regression."
+}

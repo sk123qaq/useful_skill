@@ -1,0 +1,57 @@
+{
+  "columns_after": [
+    "state",
+    "sex",
+    "age_group",
+    "general_health",
+    "personal_doctor",
+    "medical_cost_barrier",
+    "recent_checkup",
+    "exercise_past_30d",
+    "leisure_time_activity",
+    "ever_smoked_100",
+    "income_bracket",
+    "education_level",
+    "diabetes_status",
+    "heart_disease",
+    "asthma_status",
+    "obese"
+  ],
+  "columns_before": [
+    "state",
+    "sex",
+    "age_group",
+    "general_health",
+    "physical_unhealthy_days_bucket",
+    "mental_unhealthy_days_bucket",
+    "personal_doctor",
+    "medical_cost_barrier",
+    "recent_checkup",
+    "exercise_past_30d",
+    "leisure_time_activity",
+    "ever_smoked_100",
+    "income_bracket",
+    "education_level",
+    "diabetes_status",
+    "heart_disease",
+    "asthma_status",
+    "obese"
+  ],
+  "dropped_features_by_reason": {
+    "risk_labels": [
+      "mental_unhealthy_days_bucket",
+      "physical_unhealthy_days_bucket"
+    ]
+  },
+  "kept_feature_count": 15,
+  "output_path": "/Users/sk/program/useful_skill/data_analysis_V2/outputs/brfss_agent_tools_check/brfss_cleaned_v2.csv",
+  "rows_after": 59563,
+  "rows_before": 60000,
+  "steps": [
+    {
+      "action": "deduplicate_rows",
+      "rows_removed": 437
+    }
+  ],
+  "target": "obese"
+}

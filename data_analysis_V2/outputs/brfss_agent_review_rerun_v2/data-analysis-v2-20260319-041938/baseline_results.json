@@ -1,0 +1,135 @@
+{
+  "best_dummy_name": "dummy_most_frequent",
+  "best_model_name": "logistic_regression",
+  "model_order": [
+    "dummy_most_frequent",
+    "logistic_regression",
+    "random_forest_classifier"
+  ],
+  "models": [
+    {
+      "family": "dummy",
+      "fold_metrics": [
+        {
+          "accuracy": 0.661,
+          "f1_macro": 0.3979530403371463,
+          "fold": 1
+        },
+        {
+          "accuracy": 0.6609166666666667,
+          "f1_macro": 0.39792283377652904,
+          "fold": 2
+        },
+        {
+          "accuracy": 0.6609166666666667,
+          "f1_macro": 0.39792283377652904,
+          "fold": 3
+        },
+        {
+          "accuracy": 0.6609166666666667,
+          "f1_macro": 0.39792283377652904,
+          "fold": 4
+        },
+        {
+          "accuracy": 0.6609166666666667,
+          "f1_macro": 0.39792283377652904,
+          "fold": 5
+        }
+      ],
+      "level": 0,
+      "mean_metrics": {
+        "accuracy": 0.6609333333333334,
+        "f1_macro": 0.3979288750886525
+      },
+      "model_name": "dummy_most_frequent",
+      "std_metrics": {
+        "accuracy": 3.333333333332966e-05,
+        "f1_macro": 1.2082624246900764e-05
+      }
+    },
+    {
+      "family": "linear",
+      "fold_metrics": [
+        {
+          "accuracy": 0.6875833333333333,
+          "f1_macro": 0.5877614032129741,
+          "fold": 1
+        },
+        {
+          "accuracy": 0.6854166666666667,
+          "f1_macro": 0.5836378345487233,
+          "fold": 2
+        },
+        {
+          "accuracy": 0.6910833333333334,
+          "f1_macro": 0.5907805819921801,
+          "fold": 3
+        },
+        {
+          "accuracy": 0.699,
+          "f1_macro": 0.600787284610814,
+          "fold": 4
+        },
+        {
+          "accuracy": 0.687,
+          "f1_macro": 0.5899479607280192,
+          "fold": 5
+        }
+      ],
+      "level": 1,
+      "mean_metrics": {
+        "accuracy": 0.6900166666666667,
+        "f1_macro": 0.5905830130185421
+      },
+      "model_name": "logistic_regression",
+      "std_metrics": {
+        "accuracy": 0.004858383361663494,
+        "f1_macro": 0.005670387456116234
+      }
+    },
+    {
+      "family": "tree",
+      "fold_metrics": [
+        {
+          "accuracy": 0.6756666666666666,
+          "f1_macro": 0.5764467846521378,
+          "fold": 1
+        },
+        {
+          "accuracy": 0.66925,
+          "f1_macro": 0.5714313133241211,
+          "fold": 2
+        },
+        {
+          "accuracy": 0.6778333333333333,
+          "f1_macro": 0.5847285369586769,
+          "fold": 3
+        },
+        {
+          "accuracy": 0.6805833333333333,
+          "f1_macro": 0.5867976142242595,
+          "fold": 4
+        },
+        {
+          "accuracy": 0.6700833333333334,
+          "f1_macro": 0.5752998019290461,
+          "fold": 5
+        }
+      ],
+      "level": 2,
+      "mean_metrics": {
+        "accuracy": 0.6746833333333333,
+        "f1_macro": 0.5789408102176482
+      },
+      "model_name": "random_forest_classifier",
+      "std_metrics": {
+        "accuracy": 0.004390456822599548,
+        "f1_macro": 0.005849731592134857
+      }
+    }
+  ],
+  "primary_metric": "accuracy",
+  "primary_metric_direction": "max",
+  "target": "obese",
+  "task_type": "classification"
+}

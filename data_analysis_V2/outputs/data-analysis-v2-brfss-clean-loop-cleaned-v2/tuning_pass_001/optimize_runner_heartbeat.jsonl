@@ -1,0 +1,32 @@
+{"job_name": "optimize_runner", "message": "starting classification tuning", "ts": "2026-03-19T04:51:26+00:00"}
+{"job_name": "optimize_runner", "message": "evaluating logistic_regression_c0.5 fold 1", "ts": "2026-03-19T04:51:26+00:00"}
+{"job_name": "optimize_runner", "message": "evaluating logistic_regression_c0.5 fold 2", "ts": "2026-03-19T04:51:26+00:00"}
+{"job_name": "optimize_runner", "message": "evaluating logistic_regression_c0.5 fold 3", "ts": "2026-03-19T04:51:26+00:00"}
+{"job_name": "optimize_runner", "message": "evaluating logistic_regression_c0.5 fold 4", "ts": "2026-03-19T04:51:27+00:00"}
+{"job_name": "optimize_runner", "message": "evaluating logistic_regression_c0.5 fold 5", "ts": "2026-03-19T04:51:27+00:00"}
+{"job_name": "optimize_runner", "message": "evaluating logistic_regression_c1.0 fold 1", "ts": "2026-03-19T04:51:27+00:00"}
+{"job_name": "optimize_runner", "message": "evaluating logistic_regression_c1.0 fold 2", "ts": "2026-03-19T04:51:28+00:00"}
+{"job_name": "optimize_runner", "message": "evaluating logistic_regression_c1.0 fold 3", "ts": "2026-03-19T04:51:28+00:00"}
+{"job_name": "optimize_runner", "message": "evaluating logistic_regression_c1.0 fold 4", "ts": "2026-03-19T04:51:28+00:00"}
+{"job_name": "optimize_runner", "message": "evaluating logistic_regression_c1.0 fold 5", "ts": "2026-03-19T04:51:29+00:00"}
+{"job_name": "optimize_runner", "message": "evaluating logistic_regression_c1.0_balanced fold 1", "ts": "2026-03-19T04:51:29+00:00"}
+{"job_name": "optimize_runner", "message": "evaluating logistic_regression_c1.0_balanced fold 2", "ts": "2026-03-19T04:51:29+00:00"}
+{"job_name": "optimize_runner", "message": "evaluating logistic_regression_c1.0_balanced fold 3", "ts": "2026-03-19T04:51:30+00:00"}
+{"job_name": "optimize_runner", "message": "evaluating logistic_regression_c1.0_balanced fold 4", "ts": "2026-03-19T04:51:30+00:00"}
+{"job_name": "optimize_runner", "message": "evaluating logistic_regression_c1.0_balanced fold 5", "ts": "2026-03-19T04:51:30+00:00"}
+{"job_name": "optimize_runner", "message": "evaluating logistic_regression_c4.0_balanced fold 1", "ts": "2026-03-19T04:51:31+00:00"}
+{"job_name": "optimize_runner", "message": "evaluating logistic_regression_c4.0_balanced fold 2", "ts": "2026-03-19T04:51:31+00:00"}
+{"job_name": "optimize_runner", "message": "evaluating logistic_regression_c4.0_balanced fold 3", "ts": "2026-03-19T04:51:31+00:00"}
+{"job_name": "optimize_runner", "message": "evaluating logistic_regression_c4.0_balanced fold 4", "ts": "2026-03-19T04:51:32+00:00"}
+{"job_name": "optimize_runner", "message": "evaluating logistic_regression_c4.0_balanced fold 5", "ts": "2026-03-19T04:51:32+00:00"}
+{"job_name": "optimize_runner", "message": "evaluating random_forest_depth12_leaf5 fold 1", "ts": "2026-03-19T04:51:32+00:00"}
+{"job_name": "optimize_runner", "message": "evaluating random_forest_depth12_leaf5 fold 2", "ts": "2026-03-19T04:51:34+00:00"}
+{"job_name": "optimize_runner", "message": "evaluating random_forest_depth12_leaf5 fold 3", "ts": "2026-03-19T04:51:35+00:00"}
+{"job_name": "optimize_runner", "message": "evaluating random_forest_depth12_leaf5 fold 4", "ts": "2026-03-19T04:51:36+00:00"}
+{"job_name": "optimize_runner", "message": "evaluating random_forest_depth12_leaf5 fold 5", "ts": "2026-03-19T04:51:38+00:00"}
+{"job_name": "optimize_runner", "message": "evaluating random_forest_depth12_leaf5_balanced fold 1", "ts": "2026-03-19T04:51:39+00:00"}
+{"job_name": "optimize_runner", "message": "evaluating random_forest_depth12_leaf5_balanced fold 2", "ts": "2026-03-19T04:51:41+00:00"}
+{"job_name": "optimize_runner", "message": "evaluating random_forest_depth12_leaf5_balanced fold 3", "ts": "2026-03-19T04:51:43+00:00"}
+{"job_name": "optimize_runner", "message": "evaluating random_forest_depth12_leaf5_balanced fold 4", "ts": "2026-03-19T04:51:44+00:00"}
+{"job_name": "optimize_runner", "message": "evaluating random_forest_depth12_leaf5_balanced fold 5", "ts": "2026-03-19T04:51:46+00:00"}
+{"job_name": "optimize_runner", "message": "completed classification tuning", "ts": "2026-03-19T04:51:48+00:00"}

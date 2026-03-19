@@ -10,7 +10,11 @@ from typing import Any
 KNOWN_JSON_ARTIFACTS = {
     "environment": "environment.json",
     "read_plan": "read_plan.json",
+    "semantic_schema": "semantic_schema.json",
+    "feature_lineage": "feature_lineage.json",
     "chart_plan": "chart_plan.json",
+    "chart_candidates": "chart_candidates.json",
+    "report_chart_decision": "report_chart_decision.json",
     "cleaning_report": "cleaning_report.json",
     "stats_report": "stats_report.json",
     "feature_plan": "feature_plan.json",
@@ -95,6 +99,8 @@ def _collect_run_context(run_dir: Path) -> dict[str, Any]:
 def _summary_cards(context: dict[str, Any]) -> list[dict[str, str]]:
     cleaning = context.get("cleaning_report") or {}
     chart_plan = context.get("chart_plan") or {}
+    chart_candidates = context.get("chart_candidates") or {}
+    report_chart_decision = context.get("report_chart_decision") or {}
     environment = context.get("environment") or {}
     cards = [
         {"label": "Task", "value": chart_plan.get("task", "unknown")},
@@ -110,11 +116,57 @@ def _summary_cards(context: dict[str, Any]) -> list[dict[str, str]]:
     if duplicates:
         cards.append({"label": "Duplicate Ratio", "value": _fmt_percent(duplicates.get("duplicate_ratio", 0.0))})
     cards.append({"label": "Charts", "value": str(len(context.get("png_files", [])))})
+    if chart_candidates:
+        candidates = chart_candidates.get("candidates", []) if isinstance(chart_candidates.get("candidates", []), list) else []
+        eligible = [item for item in candidates if isinstance(item, dict) and bool(item.get("allow_in_formal_body")) and not bool(item.get("diagnostic_only"))]
+        cards.append({"label": "Report Audience", "value": str(chart_candidates.get("report_audience", "management"))})
+        cards.append({"label": "Body Chart Candidates", "value": str(len(eligible))})
+    if report_chart_decision:
+        selected = report_chart_decision.get("selected_charts", []) if isinstance(report_chart_decision.get("selected_charts", []), list) else []
+        cards.append({"label": "Body Chart Decision", "value": str(report_chart_decision.get("status", "draft"))})
+        cards.append({"label": "Body Charts Selected", "value": str(len(selected))})
     modules = environment.get("modules", {})
     if modules:
         available = sum(bool(value) for value in modules.values())
         cards.append({"label": "Deps Available", "value": f"{available}/{len(modules)}"})
     return cards
+
+
+def _render_formal_report_governance(context: dict[str, Any]) -> str:
+    chart_candidates = context.get("chart_candidates") or {}
+    report_chart_decision = context.get("report_chart_decision") or {}
+    if not chart_candidates and not report_chart_decision:
+        return ""
+    candidates = chart_candidates.get("candidates", []) if isinstance(chart_candidates.get("candidates", []), list) else []
+    eligible = [item for item in candidates if isinstance(item, dict) and bool(item.get("allow_in_formal_body")) and not bool(item.get("diagnostic_only"))]
+    diagnostic = [item for item in candidates if isinstance(item, dict) and bool(item.get("diagnostic_only"))]
+    selected = report_chart_decision.get("selected_charts", []) if isinstance(report_chart_decision.get("selected_charts", []), list) else []
+    selected_html = "".join(
+        f"<li>{_escape(item.get('title') or item.get('file') or 'chart')} ({_escape(item.get('file') or 'N/A')})</li>"
+        for item in selected
+        if isinstance(item, dict)
+    )
+    rows = [
+        ("Report Audience", chart_candidates.get("report_audience") or report_chart_decision.get("report_audience") or "N/A"),
+        ("Governed Candidates", len(candidates)),
+        ("Eligible Body Charts", len(eligible)),
+        ("Diagnostic-only Charts", len(diagnostic)),
+        ("Decision Status", report_chart_decision.get("status", "not recorded")),
+        ("Selected Body Charts", len(selected)),
+    ]
+    return f"""
+    <section class="panel">
+      <h2>Formal Report Governance</h2>
+      <p class="lead">This dashboard stays read-only. It shows the formal-report governance metadata, but it does not replace `report_chart_decision.json` or the second-pass chart review workflow.</p>
+      <table class="kv-table">{''.join(f"<tr><th>{_escape(label)}</th><td>{_escape(value)}</td></tr>" for label, value in rows)}</table>
+      <ul class="bullet-list subtle">
+        <li>Formal-report body charts should come from governed candidates, not arbitrary PNG discovery.</li>
+        <li>Diagnostic-only or body-ineligible charts may still appear in the gallery because the dashboard keeps a full-run review view.</li>
+      </ul>
+      <h3>Current Body Chart Selection</h3>
+      <ul class="bullet-list">{selected_html or '<li>No explicit body-chart decision recorded yet.</li>'}</ul>
+    </section>
+    """
 
 
 def _render_cards(cards: list[dict[str, str]]) -> str:
@@ -675,6 +727,7 @@ def _build_html(context: dict[str, Any], title: str | None = None) -> str:
     {_render_research_section(context)}
     {_render_analysis_section(context)}
     {_render_model_section(context)}
+    {_render_formal_report_governance(context)}
     {_render_causal_section(context)}
     {_render_gallery(context)}
     {_render_artifact_index(context)}

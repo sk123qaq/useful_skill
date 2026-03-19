@@ -33,3 +33,10 @@ Prefer:
 2. main finding chart
 3. diagnostic chart
 4. risk or uncertainty chart
+
+## Formal Report Governance
+
+- For formal report正文, chart selection should be audience-first, not file-first.
+- Prefer raw business fields over one-hot derived features.
+- Treat PDP, score distributions, and similar technical views as diagnostic by default unless they clearly improve the intended reader's decision quality.
+- Allow session-to-session diversity only inside a governed candidate pool with explicit constraints.

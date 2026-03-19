@@ -263,6 +263,75 @@
 
 - `reason` 很重要，它直接说明图的阅读目的
 - 如果实际 PNG 少于这里计划的图，通常表示某些图在运行时因为数据条件不满足或依赖缺失而未画出
+- 它仍然偏“分析阶段想画什么”，不等于正式报告正文最终一定放什么
+
+---
+
+## 6A. `chart_candidates.json`
+
+### 作用
+
+把已计划或已渲染的图转换成“正式报告可治理的候选池”。
+
+### 常见字段
+
+- `report_audience`
+- `candidates`
+  - `chart_id`
+  - `file`
+  - `section_role`
+  - `source_fields`
+  - `audience_fit`
+  - `diagnostic_only`
+  - `allow_in_formal_body`
+  - `business_value_score`
+  - `suitability_score`
+
+### 怎么看
+
+- 这是“哪些图有资格进入正文”的约束层，不是最终入选结果
+- `diagnostic_only=true` 说明它更适合过程审阅、附录或分析师复核，不适合作为正式报告正文主图
+- `allow_in_formal_body=false` 是硬约束，后续 agent 不应把这类图直接选进正文
+- `source_fields` 比编码后的模型列更重要，它表示这张图应该回到哪个原始业务字段去理解
+
+### 解读建议
+
+- 优先看 `section_role` 和 `audience_fit`，判断它更适合给谁看、承担什么角色
+- 如果看到 `source_fields=["age_group"]`，而文件却是 `pdp_age_group_80.png`，要意识到这张图在业务语义上属于“年龄组”这个原始字段，而不是只属于某个 one-hot 列
+- 正式报告正文图的多样性应发生在候选池内部，而不是脱离这个约束层随意改选
+
+---
+
+## 6B. `report_chart_decision.json`
+
+### 作用
+
+记录正式报告正文图的最终选择结果，以及它们的顺序、受众和入选理由。
+
+### 常见字段
+
+- `status`
+- `report_audience`
+- `selected_charts`
+  - `chart_id`
+  - `file`
+  - `selection_rationale`
+  - `interpretation`
+  - `implication`
+  - `caption_note`
+- `overall_summary`
+
+### 怎么看
+
+- 这是“最终正文图决策层”，比 `chart_plan.json` 和 `chart_candidates.json` 更接近正式交付
+- `status=draft` 表示正文图草稿已选，但逐图解读未必写完
+- `status=final` 通常表示正文图和逐图解读都已完成二次回写
+
+### 解读建议
+
+- 如果 `selected_charts` 很少，不代表分析没做够，可能只是受众不需要看到全部图
+- 如果同一 run 在不同会话里出现不同的正文图组合，先看 `report_audience` 和 `selection_rationale` 是否发生了变化
+- 一旦 `selection_rationale` 说不清“为什么这张图属于正文”，就说明这张图大概率应降回过程报告或附录
 
 ---
 
@@ -658,6 +727,8 @@
 - 看某变量变化时，模型预测平均如何变化
 - 曲线很陡，说明模型对这个变量敏感
 - 两端样本少时，曲线不一定稳
+- 如果它来自 one-hot 派生特征，例如 `age_group_80`，业务解读时要先回到原始字段语义，不要把单个 dummy 列直接当成正文主结论
+- 在 formal report 治理里，PDP 常常更适合当机制解释或附录图，而不是管理层正文主图
 
 ## 5. `cluster_sizes.png`
 

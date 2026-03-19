@@ -1,0 +1,10 @@
+{
+  "continue_after_baseline": true,
+  "continue_after_scout": true,
+  "data_scope": "full",
+  "question": "Predict obesity risk from BRFSS survey features and report only evidence-safe conclusions.",
+  "sample_rows": 5000,
+  "target": "obese",
+  "task": "classification",
+  "time_col": null
+}

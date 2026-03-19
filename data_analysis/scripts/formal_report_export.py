@@ -6,6 +6,7 @@ import json
 import math
 import re
 import subprocess
+import tempfile
 from datetime import date, datetime
 from pathlib import Path
 from typing import Any
@@ -24,14 +25,18 @@ from reportlab.pdfbase.cidfonts import UnicodeCIDFont
 from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.platypus import Image, KeepTogether, PageBreak, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
-from common import command_available, detect_cjk_font, detect_cjk_font_path, module_available, write_json, write_markdown
+from common import command_available, detect_cjk_font, detect_cjk_font_path, friendly_chart_feature_label, module_available, write_json, write_markdown
 
 
 KNOWN_JSON = [
     "environment.json",
     "read_plan.json",
+    "semantic_schema.json",
+    "feature_lineage.json",
     "chart_plan.json",
+    "chart_candidates.json",
     "chart_review.json",
+    "report_chart_decision.json",
     "cleaning_report.json",
     "stats_report.json",
     "feature_plan.json",
@@ -160,6 +165,8 @@ PREFIX_LABELS = {
     "general_health": "自评健康",
     "exercise_past_30d": "过去 30 天运动情况",
     "leisure_time_activity": "休闲活动",
+    "mental_unhealthy_days_bucket": "近 30 天心理不健康天数分组",
+    "physical_unhealthy_days_bucket": "近 30 天身体不健康天数分组",
     "diabetes_status": "糖尿病状态",
     "education_level": "教育程度",
     "personal_doctor": "固定医生情况",
@@ -208,6 +215,12 @@ TOKEN_LABELS = {
     "health": "健康",
     "exercise": "运动",
     "past": "过去",
+    "mental": "心理",
+    "physical": "身体",
+    "unhealthy": "不健康",
+    "days": "天数",
+    "day": "天数",
+    "bucket": "分组",
     "status": "状态",
     "diabetes": "糖尿病",
     "education": "教育",
@@ -462,6 +475,30 @@ def _normalize_report_text(text: str | None) -> str:
         normalized = normalized.replace(source, target)
     for source, target in sorted(TEXT_REPLACEMENTS.items(), key=lambda item: len(item[0]), reverse=True):
         normalized = normalized.replace(source, target)
+    normalized = re.sub(
+        r"\bmental[_ ]unhealthy[_ ]days[_ ]bucket[_ ](\d+)[_ ](\d+)\b",
+        lambda match: f"近30天心理不健康天数分组={match.group(1)}-{match.group(2)}天",
+        normalized,
+        flags=re.IGNORECASE,
+    )
+    normalized = re.sub(
+        r"\bphysical[_ ]unhealthy[_ ]days[_ ]bucket[_ ](\d+)[_ ](\d+)\b",
+        lambda match: f"近30天身体不健康天数分组={match.group(1)}-{match.group(2)}天",
+        normalized,
+        flags=re.IGNORECASE,
+    )
+    normalized = re.sub(
+        r"\bmental[_ ]unhealthy[_ ]days[_ ]bucket\b",
+        "近30天心理不健康天数分组",
+        normalized,
+        flags=re.IGNORECASE,
+    )
+    normalized = re.sub(
+        r"\bphysical[_ ]unhealthy[_ ]days[_ ]bucket\b",
+        "近30天身体不健康天数分组",
+        normalized,
+        flags=re.IGNORECASE,
+    )
     normalized = normalized.replace("PDP", "PDP")
     normalized = re.sub(r"\s+", " ", normalized)
     normalized = re.sub(r"(?<=[\u4e00-\u9fff])\s+(?=[A-Za-z0-9])", "", normalized)
@@ -509,12 +546,20 @@ def _friendly_feature_name(name: str | None) -> str:
             friendly_value = VALUE_LABELS.get(value)
             if friendly_value:
                 return f"{friendly_prefix}={friendly_value}"
+            if prefix in {"mental_unhealthy_days_bucket", "physical_unhealthy_days_bucket"}:
+                if re.fullmatch(r"\d+_\d+", value):
+                    return f"{friendly_prefix}={value.replace('_', '-')}天"
+                if re.fullmatch(r"\d+", value):
+                    return f"{friendly_prefix}={value}天"
             if re.fullmatch(r"\d+_\d+", value):
                 return f"{friendly_prefix}={value.replace('_', '-')}"
             if re.fullmatch(r"\d+", value):
                 return f"{friendly_prefix}={value} 岁及以上"
             return f"{friendly_prefix}={value.replace('_', ' ')}"
 
+    friendly = friendly_chart_feature_label(name)
+    if friendly and friendly != "变量":
+        return friendly
     tokens = [TOKEN_LABELS.get(token, token) for token in name.split("_")]
     return " ".join(tokens)
 
@@ -1152,6 +1197,104 @@ def _metric_commentary(context: dict[str, Any]) -> list[list[str]]:
     return rows
 
 
+def _model_result_section_title(context: dict[str, Any]) -> str:
+    if context.get("task") in {"classification", "regression"}:
+        return "五、模型设计与结果"
+    return "五、关键指标与判断"
+
+
+def _model_design_paragraph(context: dict[str, Any]) -> str:
+    task = context.get("task")
+    best_model, _ = _best_model_metrics(context)
+    model_report = context.get("model_report") or {}
+    model_count = len(model_report.get("models", {}))
+    positive_rate = _positive_rate(context)
+    if task == "classification":
+        if not best_model:
+            return (
+                "本节原本用于说明分类模型如何设计与比较，但当前运行停留在预建模阶段，"
+                "因此这里只保留后续计划与判断依据，尚未形成正式模型结果。"
+            )
+        rate_text = _pct(positive_rate) if positive_rate is not None else "N/A"
+        return (
+            f"为了回答“现有调查字段能否支持肥胖风险的初步分层识别”这一问题，"
+            f"本次先在 5000 条样本上比较 {model_count} 个基线分类模型，"
+            f"并把加权 F1 作为主要排序依据。这样做的目的是避免在目标发生率约为 {rate_text} "
+            "的情况下被单一准确率误导，让模型设计更贴近真实筛查和分层场景。"
+        )
+    if task == "regression":
+        if not best_model:
+            return "当前运行停留在预建模阶段，因此这里只说明后续的回归评估思路，尚未形成正式模型结果。"
+        return (
+            "为了判断现有字段能否对连续目标形成稳定预测，本次先比较多个轻量基线回归模型，"
+            "再结合 R2、RMSE 等指标判断解释力和误差水平，避免过早依赖复杂模型。"
+        )
+    return _method_summary(context)
+
+
+def _model_result_readout_paragraph(context: dict[str, Any]) -> str:
+    task = context.get("task")
+    best_model, metrics = _best_model_metrics(context)
+    positive_rate = _positive_rate(context)
+    if task == "classification" and best_model and metrics:
+        accuracy = metrics.get("test_accuracy")
+        f1_value = metrics.get("test_f1_weighted")
+        majority_baseline = max(positive_rate, 1 - positive_rate) if positive_rate is not None else None
+        baseline_text = _pct(majority_baseline) if majority_baseline is not None else "N/A"
+        return (
+            f"从结果上看，当前最佳模型为 {_friendly_model_name(best_model)}。"
+            f"表格中的 Accuracy 约为 {_fmt(accuracy)}，加权 F1 约为 {_fmt(f1_value)}，"
+            f"同时多数类基线约为 {baseline_text}。这说明模型已经不只是机械地跟随多数类，"
+            "而是在一定程度上学到了可用于区分风险高低的结构性信号。"
+        )
+    if task == "regression" and best_model and metrics:
+        r2_value = metrics.get("test_r2")
+        rmse_value = metrics.get("test_neg_root_mean_squared_error")
+        rmse_text = _fmt(abs(rmse_value)) if rmse_value is not None else "N/A"
+        return (
+            f"从结果上看，当前最佳模型为 {_friendly_model_name(best_model)}。"
+            f"表格中的 R2 约为 {_fmt(r2_value)}，RMSE 约为 {rmse_text}。"
+            "这意味着模型已经具备一定解释力，但误差仍需放回业务量纲中理解。"
+        )
+    return "当前尚未形成可供正式引用的模型结果表，因此本节暂以说明性文字为主。"
+
+
+def _model_usability_paragraph(context: dict[str, Any]) -> str:
+    task = context.get("task")
+    best_model, metrics = _best_model_metrics(context)
+    if task == "classification" and best_model and metrics:
+        f1_value = metrics.get("test_f1_weighted")
+        recall_value = metrics.get("test_recall_weighted")
+        judgment = _metric_judgment("f1_weighted", f1_value)
+        recall_text = _fmt(recall_value)
+        return (
+            f"结合表格里的指标，这个模型目前更适合作为“可用但仍需继续打磨”的分层工具。"
+            f"加权 F1 的判断为“{judgment}”，召回率约为 {recall_text}，"
+            "说明它已经可以支持高风险人群排序和优先干预，但还不足以承担个体级最终判断或高代价决策。"
+        )
+    if task == "regression" and best_model and metrics:
+        r2_value = metrics.get("test_r2")
+        judgment = _metric_judgment("r2", r2_value)
+        return (
+            f"结合表格里的指标，这个模型当前属于“{judgment}”水平。"
+            "它更适合做趋势判断、排序或资源分配参考，而不宜直接替代业务主口径。"
+        )
+    return "当前结果更适合作为阶段性复核依据，是否进入正式业务使用仍需结合后续验证结果决定。"
+
+
+def _model_next_steps_paragraph(context: dict[str, Any]) -> str:
+    recommendations = _recommendations(context)
+    if context.get("task") in {"classification", "regression"} and recommendations:
+        first = _normalize_report_text(recommendations[0]).rstrip("。")
+        second = _normalize_report_text(recommendations[1]).rstrip("。") if len(recommendations) > 1 else ""
+        if second:
+            return f"下一步建议是：{first}；同时{second}。"
+        return f"下一步建议是：{first}。"
+    if recommendations:
+        return "下一步建议是：" + "；".join(_normalize_report_text(item).rstrip("。") for item in recommendations[:2]) + "。"
+    return "下一步应围绕模型可用性、稳定性和业务落地方式继续补充验证。"
+
+
 def _key_findings(context: dict[str, Any]) -> list[str]:
     findings = [line for line in _section_lines(context, "关键发现", limit=6) if _line_is_formal_report_ready(line)][:4]
     if findings:
@@ -1308,7 +1451,139 @@ def _cluster_size_summary(context: dict[str, Any]) -> dict[str, float | int | No
     }
 
 
-def _chart_blocks(context: dict[str, Any]) -> list[dict[str, Any]]:
+def _chart_candidate_rows(context: dict[str, Any]) -> list[dict[str, Any]]:
+    payload = context.get("chart_candidates") or {}
+    rows = payload.get("candidates") if isinstance(payload, dict) else None
+    if not isinstance(rows, list):
+        return []
+    return [item for item in rows if isinstance(item, dict)]
+
+
+def _report_audience(context: dict[str, Any], decision: dict[str, Any] | None = None) -> str:
+    if isinstance(decision, dict) and decision.get("report_audience"):
+        return str(decision["report_audience"])
+    chart_candidates = context.get("chart_candidates") or {}
+    if isinstance(chart_candidates, dict) and chart_candidates.get("report_audience"):
+        return str(chart_candidates["report_audience"])
+    return "management"
+
+
+def _candidate_lookup_maps(context: dict[str, Any]) -> tuple[dict[str, dict[str, Any]], dict[str, dict[str, Any]]]:
+    by_id: dict[str, dict[str, Any]] = {}
+    by_file: dict[str, dict[str, Any]] = {}
+    for item in _chart_candidate_rows(context):
+        chart_id = item.get("chart_id")
+        file_name = item.get("file")
+        if chart_id:
+            by_id[str(chart_id)] = item
+        if file_name:
+            by_file[str(file_name)] = item
+    return by_id, by_file
+
+
+def _candidate_path(context: dict[str, Any], file_name: str | None) -> Path | None:
+    if not file_name:
+        return None
+    for path in context.get("png_files", []):
+        if path.name == file_name:
+            return path
+    return None
+
+
+def _candidate_title(candidate: dict[str, Any], plan_meta: dict[str, Any] | None = None) -> str:
+    return str(
+        candidate.get("title")
+        or (plan_meta or {}).get("title")
+        or candidate.get("file")
+        or candidate.get("chart_type")
+        or "图表"
+    )
+
+
+def _candidate_to_chart_block(context: dict[str, Any], candidate: dict[str, Any], *, index: int | None = None) -> dict[str, Any] | None:
+    file_name = str(candidate.get("file") or "")
+    path = _candidate_path(context, file_name)
+    if path is None:
+        return None
+    _, custom_meta = _chart_plan_file_meta(context)
+    plan_meta = custom_meta.get(file_name, {})
+    meta = IMAGE_EXPLANATIONS.get(file_name, {})
+    return {
+        "index": index,
+        "path": path,
+        "chart_id": candidate.get("chart_id"),
+        "file": file_name,
+        "title": _candidate_title(candidate, plan_meta),
+        "chart_type": candidate.get("chart_type") or plan_meta.get("chart") or meta.get("chart") or "chart",
+        "chart_intent": candidate.get("chart_intent") or candidate.get("section_role"),
+        "section_role": candidate.get("section_role"),
+        "source_fields": candidate.get("source_fields") or [],
+        "source_field_labels": candidate.get("source_field_labels") or [],
+        "audience_fit": candidate.get("audience_fit") or {},
+        "diagnostic_only": bool(candidate.get("diagnostic_only")),
+        "allow_in_formal_body": bool(candidate.get("allow_in_formal_body")),
+        "selection_rationale": _normalize_report_text(candidate.get("selection_rationale") or ""),
+        "how_to_read": candidate.get("how_to_read") or plan_meta.get("how_to_read") or meta.get("how_to_read") or "先看整体结构，再结合对应 JSON 指标理解。",
+        "meaning": candidate.get("meaning") or plan_meta.get("meaning") or plan_meta.get("reason") or meta.get("meaning") or "这张图用于补充展示本次分析结果。",
+    }
+
+
+def _role_priority_for_audience(audience: str) -> dict[str, int]:
+    if audience == "operator":
+        return {"decision_support": 0, "core_evidence": 1, "context": 2, "risk_boundary": 3, "mechanism": 4, "diagnostic": 5}
+    if audience == "analyst":
+        return {"core_evidence": 0, "mechanism": 1, "context": 2, "risk_boundary": 3, "decision_support": 4, "diagnostic": 5}
+    return {"core_evidence": 0, "decision_support": 1, "context": 2, "risk_boundary": 3, "mechanism": 4, "diagnostic": 5}
+
+
+def _eligible_body_candidate_rows(context: dict[str, Any], audience: str | None = None) -> list[dict[str, Any]]:
+    chosen_audience = audience or _report_audience(context)
+    priorities = _role_priority_for_audience(chosen_audience)
+    eligible: list[dict[str, Any]] = []
+    for item in _chart_candidate_rows(context):
+        file_name = item.get("file")
+        if not file_name or _candidate_path(context, str(file_name)) is None:
+            continue
+        if not bool(item.get("rendered", True)):
+            continue
+        if bool(item.get("diagnostic_only")):
+            continue
+        if not bool(item.get("allow_in_formal_body")):
+            continue
+        audience_fit = item.get("audience_fit") or {}
+        if audience_fit.get(chosen_audience) == "low":
+            continue
+        eligible.append(item)
+    eligible.sort(
+        key=lambda item: (
+            priorities.get(str(item.get("section_role") or item.get("chart_intent") or "diagnostic"), 9),
+            -int(item.get("suitability_score") or 0),
+            -int(item.get("business_value_score") or 0),
+            str(item.get("chart_id") or ""),
+        )
+    )
+    selected: list[dict[str, Any]] = []
+    seen_files: set[str] = set()
+    seen_field_roles: set[tuple[tuple[str, ...], str]] = set()
+    for item in eligible:
+        file_name = str(item.get("file") or "")
+        if not file_name or file_name in seen_files:
+            continue
+        source_fields = tuple(str(field) for field in (item.get("source_fields") or []) if field)
+        section_role = str(item.get("section_role") or item.get("chart_intent") or "")
+        key = (source_fields, section_role)
+        if source_fields and key in seen_field_roles:
+            continue
+        selected.append(item)
+        seen_files.add(file_name)
+        if source_fields:
+            seen_field_roles.add(key)
+        if len(selected) >= MAX_FORMAL_REPORT_CHARTS:
+            break
+    return selected
+
+
+def _legacy_chart_blocks(context: dict[str, Any]) -> list[dict[str, Any]]:
     order = {name: index for index, name in enumerate(IMAGE_ORDER)}
     custom_order, custom_meta = _chart_plan_file_meta(context)
     paths = sorted(
@@ -1327,11 +1602,51 @@ def _chart_blocks(context: dict[str, Any]) -> list[dict[str, Any]]:
                 "path": path,
                 "title": title,
                 "chart_type": plan_meta.get("chart") or meta.get("chart") or "chart",
+                "chart_id": None,
                 "how_to_read": how_to_read,
                 "meaning": meaning,
+                "diagnostic_only": False,
+                "allow_in_formal_body": True,
+                "selection_rationale": "",
             }
         )
     return blocks
+
+
+def _candidate_default_blocks(context: dict[str, Any], audience: str | None = None) -> list[dict[str, Any]]:
+    blocks: list[dict[str, Any]] = []
+    for index, item in enumerate(_eligible_body_candidate_rows(context, audience=audience), start=1):
+        block = _candidate_to_chart_block(context, item, index=index)
+        if block is not None:
+            blocks.append(block)
+    return blocks
+
+
+def _chart_blocks(context: dict[str, Any], decision: dict[str, Any] | None = None) -> list[dict[str, Any]]:
+    if isinstance(decision, dict):
+        selected = decision.get("selected_charts")
+        if isinstance(selected, list) and selected:
+            blocks: list[dict[str, Any]] = []
+            for index, item in enumerate(selected, start=1):
+                if not isinstance(item, dict):
+                    continue
+                block = _candidate_to_chart_block(context, item, index=index)
+                if block is None and item.get("file"):
+                    block = _candidate_to_chart_block(context, {"file": item.get("file"), "title": item.get("title")}, index=index)
+                if block is None:
+                    continue
+                if item.get("title"):
+                    block["title"] = str(item["title"])
+                block["selection_rationale"] = _normalize_report_text(item.get("selection_rationale") or "")
+                blocks.append(block)
+            if blocks:
+                return blocks
+    candidate_blocks = _candidate_default_blocks(context)
+    if candidate_blocks:
+        return candidate_blocks
+    if _chart_candidate_rows(context):
+        return []
+    return _legacy_chart_blocks(context)
 
 
 def _ensure_sentence(text: str | None) -> str:
@@ -1367,58 +1682,61 @@ def _technical_chart_note_hint(block: dict[str, Any]) -> str:
     return "；".join(deduped[:3])
 
 
-def _draft_chart_interpretation(block: dict[str, Any]) -> str:
-    file_name = block.get("path").name if block.get("path") else ""
-    title = block.get("title") or "图表"
-    if file_name == "target_distribution.png":
-        return _ensure_sentence("先确认目标值是否明显失衡；如果正负样本差距较大，后续模型表现不能只看 Accuracy，还要结合召回率和 F1。")
-    if file_name == "shap_bar.png":
-        return _ensure_sentence("先核对前几位重要变量是否集中在年龄、自评健康、运动和慢病状态；如果排序稳定，说明模型抓到的是可解释信号。")
-    if file_name.startswith("pdp_"):
-        feature_name = file_name.removeprefix("pdp_").removesuffix(".png")
-        feature_label = _friendly_feature_name(feature_name)
-        return _ensure_sentence(f"先看 {feature_label} 的边际曲线是上升、下降还是接近平坦；如果方向稳定，说明这个变量对模型判断有持续影响。")
-    kind = _chart_kind_label(str(block.get("chart_type")))
-    return _ensure_sentence(f"先核对 {title} 对应的 {kind} 是否把差异最明显的对象、拐点或尾部区域凸显出来，再判断业务含义是否稳定。")
-
-
-def _draft_chart_implication(block: dict[str, Any]) -> str:
-    file_name = block.get("path").name if block.get("path") else ""
-    if file_name == "target_distribution.png":
-        return _ensure_sentence("这意味着后续模型评估必须和类别基线一起看，不能让多数类准确率掩盖少数类识别能力。")
-    if file_name == "shap_bar.png":
-        return _ensure_sentence("这意味着正式报告里的解释应优先围绕这些高权重维度展开，而不是只盯单个分数。")
-    if file_name.startswith("pdp_"):
-        return _ensure_sentence("这意味着可以进一步核对变量方向是否与业务常识一致，再决定是否进入定稿。")
-    return _ensure_sentence("这意味着应结合图中的差异幅度、方向和尾部特征，再判断它能否支撑后续决策。")
-
-
-def _draft_chart_review(chart_blocks: list[dict[str, Any]]) -> dict[str, Any]:
-    charts = [
-        {
-            "index": index + 1,
-            "file": block["path"].name,
-            "title": block["title"],
-            "interpretation": _draft_chart_interpretation(block),
-            "implication": _draft_chart_implication(block),
-            "caption_note": _technical_chart_note_hint(block),
-        }
-        for index, block in enumerate(chart_blocks)
-    ]
+def _pending_chart_review(chart_blocks: list[dict[str, Any]]) -> dict[str, Any]:
     return {
         "generated_at": datetime.now().isoformat(timespec="seconds"),
         "status": "draft",
-        "source": "deterministic-draft",
-        "overall_summary": "这些图要一起看：先用分布图判断基线是否失衡，再用特征重要性和 PDP 核对模型抓到的是否是可解释信号。" if chart_blocks else "",
-        "charts": charts,
+        "source": "awaiting-agent-second-pass",
+        "overall_summary": "",
+        "charts": [
+            {
+                "index": index + 1,
+                "file": block["path"].name,
+                "title": block["title"],
+                "interpretation": "",
+                "implication": "",
+                "caption_note": "",
+            }
+            for index, block in enumerate(chart_blocks)
+        ],
     }
 
 
-def _build_formal_report_draft_markdown(context: dict[str, Any], title: str, draft_review: dict[str, Any]) -> str:
+def _pending_report_chart_decision(context: dict[str, Any], chart_blocks: list[dict[str, Any]]) -> dict[str, Any]:
+    audience = _report_audience(context)
+    _, candidate_by_file = _candidate_lookup_maps(context)
+    selected_rows: list[dict[str, Any]] = []
+    for index, block in enumerate(chart_blocks, start=1):
+        candidate = candidate_by_file.get(block["path"].name, {})
+        selected_rows.append(
+            {
+                "index": index,
+                "chart_id": candidate.get("chart_id"),
+                "file": block["path"].name,
+                "title": block["title"],
+                "section_role": candidate.get("section_role") or block.get("section_role"),
+                "source_fields": candidate.get("source_fields") or block.get("source_fields") or [],
+                "selection_rationale": "",
+                "interpretation": "",
+                "implication": "",
+                "caption_note": "",
+            }
+        )
+    return {
+        "generated_at": datetime.now().isoformat(timespec="seconds"),
+        "status": "draft",
+        "source": "awaiting-agent-chart-selection",
+        "report_audience": audience,
+        "selected_charts": selected_rows,
+        "overall_summary": "",
+    }
+
+
+def _build_formal_report_draft_markdown(context: dict[str, Any], title: str, chart_blocks: list[dict[str, Any]]) -> str:
     lines = [
         f"# {title}",
         "",
-        "> 报告状态：草稿版，当前图表解读为自动草稿，需二次图表复核后再定稿。",
+        "> 报告状态：草稿版，正文图选择与图表解读区均需 agent 结合 report_context.json、report_chart_decision.pending.json 与 PNG 做二次回写后再定稿。",
         "",
         "## 执行摘要",
         _executive_conclusion(context),
@@ -1438,43 +1756,67 @@ def _build_formal_report_draft_markdown(context: dict[str, Any], title: str, dra
     lines.extend([f"- {item}" for item in _plain_section_rows(context, "业务/公共卫生解释", limit=6) or _recommendations(context)])
     lines.extend(["", "## 风险提示"])
     lines.extend([f"- {item}" for item in _risk_items(context)])
-    lines.extend(["", "## 图表章节首稿"])
-    for item in draft_review.get("charts", []):
+    lines.extend(["", "## 正文图与回写清单"])
+    for index, block in enumerate(chart_blocks, start=1):
         lines.extend(
             [
-                f"### 图 {item.get('index', '?')}：{item.get('title', item.get('file', '图表'))}",
-                f"- 文件名：{item.get('file', 'N/A')}",
-                f"- 首稿解释：{item.get('interpretation', '')}",
-                f"- 首稿含义：{item.get('implication', '')}",
+                f"### 图 {index}：{block.get('title', '图表')}",
+                f"- 文件名：{block['path'].name}",
+                f"- 图表类型：{_chart_kind_label(str(block.get('chart_type')))}",
+                f"- 角色：{block.get('section_role') or block.get('chart_intent') or '未标注'}",
+                f"- 回写要求：先确认它是否仍应留在正文，再重新阅读 PNG，写入 selection_rationale / interpretation / implication / caption_note。",
             ]
         )
-        if item.get("caption_note"):
-            lines.append(f"- 注释：{item['caption_note']}")
     return "\n".join(lines).strip() + "\n"
 
 
-def _report_context_payload(context: dict[str, Any], title: str, draft_review: dict[str, Any], chart_blocks: list[dict[str, Any]]) -> dict[str, Any]:
-    draft_by_file = {str(item.get("file")): item for item in draft_review.get("charts", []) if isinstance(item, dict) and item.get("file")}
+def _report_context_payload(context: dict[str, Any], title: str, chart_blocks: list[dict[str, Any]]) -> dict[str, Any]:
+    audience = _report_audience(context)
+    candidates = _chart_candidate_rows(context)
     chart_manifest: list[dict[str, Any]] = []
     for index, block in enumerate(chart_blocks, start=1):
-        draft_item = draft_by_file.get(block["path"].name, {})
         chart_manifest.append(
             {
                 "index": index,
+                "chart_id": block.get("chart_id"),
                 "file": block["path"].name,
                 "title": block["title"],
                 "chart_type": _chart_kind_label(str(block.get("chart_type"))),
-                "draft_interpretation": draft_item.get("interpretation", ""),
-                "draft_implication": draft_item.get("implication", ""),
-                "caption_note_hint": draft_item.get("caption_note", ""),
+                "section_role": block.get("section_role") or block.get("chart_intent"),
+                "source_fields": block.get("source_fields") or [],
+                "caption_note_hint": _technical_chart_note_hint(block),
                 "chart_plan_hint": block.get("meaning", ""),
+                "selection_rationale_hint": block.get("selection_rationale") or "",
+            }
+        )
+    candidate_manifest: list[dict[str, Any]] = []
+    for item in candidates:
+        file_name = str(item.get("file") or "")
+        candidate_manifest.append(
+            {
+                "chart_id": item.get("chart_id"),
+                "file": file_name,
+                "title": item.get("title") or file_name or item.get("chart_type"),
+                "chart_type": item.get("chart_type"),
+                "section_role": item.get("section_role"),
+                "source_fields": item.get("source_fields") or [],
+                "source_field_labels": item.get("source_field_labels") or [],
+                "audience_fit": item.get("audience_fit") or {},
+                "diagnostic_only": bool(item.get("diagnostic_only")),
+                "allow_in_formal_body": bool(item.get("allow_in_formal_body")),
+                "rendered": bool(item.get("rendered", True)),
+                "evidence_links": item.get("evidence_links") or [],
+                "business_value_score": item.get("business_value_score"),
+                "suitability_score": item.get("suitability_score"),
+                "why_this_chart": item.get("meaning") or "",
             }
         )
     return {
         "generated_at": datetime.now().isoformat(timespec="seconds"),
         "report_title": title,
         "report_stage": "draft",
-        "chart_review_status_hint": draft_review.get("status", "draft"),
+        "chart_review_status_hint": "awaiting-agent-second-pass",
+        "report_audience": audience,
         "task": _friendly_task_label(context.get("task")),
         "executive_conclusion": _executive_conclusion(context),
         "key_findings": _key_findings(context),
@@ -1489,6 +1831,14 @@ def _report_context_payload(context: dict[str, Any], title: str, draft_review: d
         "data_quality_rows": _data_quality_rows(context),
         "metric_commentary_rows": _metric_commentary(context),
         "chart_manifest": chart_manifest,
+        "governed_chart_candidates": candidate_manifest,
+        "chart_selection_rules": [
+            "优先从 allow_in_formal_body=true 且 diagnostic_only=false 的候选图中选择正文图。",
+            "management 受众优先核心证据、决策支撑和背景基线；operator 受众优先决策支撑；analyst 受众可保留少量机制解释图。",
+            "不要把 audience_fit 对当前受众为 low 的图放进正文，除非有非常明确的补充说明且无更好替代。",
+            "同一原始业务字段不要在正文里重复占位；如果已有更直接的核心证据图，就不要再放重复表达的诊断图。",
+            "one-hot 派生特征图、diagnostic_only 图、allow_in_formal_body=false 图默认不能进入正文。",
+        ],
         "chart_review_writing_rules": [
             "把每张图写成可直接贴入正式报告的两段中文，不要写成图表说明书或提示语。",
             "第一段直接说明图中当前出现了什么情况，尽量点出具体对象、方向、高低差异或数值背景。",
@@ -1496,18 +1846,34 @@ def _report_context_payload(context: dict[str, Any], title: str, draft_review: d
             "避免套话，例如“这张图围绕……展开”“帮助读者理解”“用于说明本次分析”等。",
             "不要写“怎么看”“本图结论”之类小标题，也不要复述文件名。",
             "如果图中有英文指标、缩写，或中文专业名词对基础读者有理解门槛，再补充注释；没有就留空字符串。",
+            "不得把脚本默认说明、图表类型描述或文件名改写成正式结论；必须基于图片本身重新观察后写作。",
         ],
+        "expected_report_chart_decision_schema": {
+            "report_audience": audience,
+            "selected_charts": [
+                {
+                    "chart_id": "<优先填写，来自 governed_chart_candidates>",
+                    "file": "target_distribution.png",
+                    "title": "目标分布图",
+                    "selection_rationale": "<必填：为什么这张图适合当前受众并应该进入正文>",
+                    "interpretation": "<选填：如果已完成二次读图，可直接回填正式解读；否则留空字符串>",
+                    "implication": "<选填：解释这张图对决策或理解意味着什么；否则留空字符串>",
+                    "caption_note": "<选填：如需解释英文指标/缩写/专业名词，写一句简短注释>",
+                }
+            ],
+            "overall_summary": "<选填：如已完成正文图整体串联，可写一段总体解读；否则留空字符串>",
+        },
         "expected_chart_review_schema": {
             "charts": [
                 {
                     "file": "target_distribution.png",
                     "title": "目标分布图",
-                    "interpretation": "图中可以看到，本次样本中的目标事件并不是平均分布，而是明显存在高低之分，这会直接影响后续模型分数的理解方式。",
-                    "implication": "这意味着后面读模型表现时，不能只看表面准确率，还要结合基线和类别分布一起判断模型是否真的识别出了高风险对象。",
-                    "caption_note": "如有英文指标、缩写或中文专业名词需要解释，则写简短注释；没有就留空字符串。",
+                    "interpretation": "<必填：直接写图中当前看到的情况，不要写成说明书>",
+                    "implication": "<必填：写这张图意味着什么，以及为什么值得关注>",
+                    "caption_note": "<选填：如需解释英文指标/缩写/专业名词，写一句简短注释；否则留空字符串>",
                 }
             ],
-            "overall_summary": "用一段正式报告口吻的中文，把所有关键图表串起来，说明整体情况和背后意义。",
+            "overall_summary": "<必填：用一段正式报告口吻的中文，把所有关键图表串起来，说明整体情况和背后意义>",
         },
     }
 
@@ -1519,7 +1885,147 @@ def _load_chart_review(path: Path) -> dict[str, Any] | None:
     return payload if isinstance(payload, dict) else None
 
 
-def _normalize_chart_review(chart_blocks: list[dict[str, Any]], review: dict[str, Any] | None, draft_review: dict[str, Any]) -> dict[str, Any]:
+def _load_report_chart_decision(path: Path) -> dict[str, Any] | None:
+    if not path.exists():
+        return None
+    payload = _load_json(path)
+    return payload if isinstance(payload, dict) else None
+
+
+def _normalize_report_chart_decision(context: dict[str, Any], decision: dict[str, Any] | None) -> dict[str, Any]:
+    default_blocks = _chart_blocks(context, decision=None)[:MAX_FORMAL_REPORT_CHARTS]
+    if decision is None:
+        return _pending_report_chart_decision(context, default_blocks)
+
+    by_id, by_file = _candidate_lookup_maps(context)
+    input_rows = decision.get("selected_charts")
+    if not isinstance(input_rows, list):
+        input_rows = decision.get("charts")
+    if not isinstance(input_rows, list):
+        raise ValueError("Invalid report chart decision JSON: selected_charts must be a list.")
+
+    normalized_rows: list[dict[str, Any]] = []
+    errors: list[str] = []
+    for index, row in enumerate(input_rows, start=1):
+        if not isinstance(row, dict):
+            errors.append(f"selected_charts[{index}] 不是对象。")
+            continue
+        candidate = None
+        chart_id = row.get("chart_id")
+        file_name = row.get("file")
+        if chart_id:
+            candidate = by_id.get(str(chart_id))
+        if candidate is None and file_name:
+            candidate = by_file.get(str(file_name))
+        if candidate is None:
+            if by_id or by_file:
+                errors.append(f"selected_charts[{index}] 无法匹配 candidate：chart_id={chart_id!r}, file={file_name!r}。")
+                continue
+            if not file_name:
+                errors.append(f"selected_charts[{index}] 缺少 file。")
+                continue
+            if _candidate_path(context, str(file_name)) is None:
+                errors.append(f"selected_charts[{index}] 指定的 PNG 不存在：{file_name}。")
+                continue
+            candidate = {"file": file_name, "title": row.get("title"), "chart_type": row.get("chart_type")}
+        if by_id or by_file:
+            if bool(candidate.get("diagnostic_only")):
+                errors.append(f"selected_charts[{index}] 不能把 diagnostic-only 图放入正文：{candidate.get('file')}.")
+            if not bool(candidate.get("allow_in_formal_body")):
+                errors.append(f"selected_charts[{index}] 不是允许进入正文的候选图：{candidate.get('file')}.")
+            audience_fit = candidate.get("audience_fit") or {}
+            audience = _report_audience(context, decision)
+            if audience_fit.get(audience) == "low":
+                errors.append(f"selected_charts[{index}] 对 {audience} 受众不适合：{candidate.get('file')}.")
+        if _candidate_path(context, str(candidate.get("file") or file_name or "")) is None:
+            errors.append(f"selected_charts[{index}] 对应的 PNG 不存在：{candidate.get('file') or file_name}.")
+            continue
+        normalized_rows.append(
+            {
+                "index": index,
+                "chart_id": candidate.get("chart_id") or chart_id,
+                "file": str(candidate.get("file") or file_name),
+                "title": str(row.get("title") or candidate.get("title") or candidate.get("file") or "图表"),
+                "chart_type": candidate.get("chart_type"),
+                "section_role": candidate.get("section_role"),
+                "source_fields": candidate.get("source_fields") or [],
+                "source_field_labels": candidate.get("source_field_labels") or [],
+                "selection_rationale": _ensure_sentence(row.get("selection_rationale")),
+                "interpretation": _ensure_sentence(row.get("interpretation")),
+                "implication": _ensure_sentence(row.get("implication")),
+                "caption_note": _ensure_sentence(row.get("caption_note") or "").rstrip("。"),
+                "diagnostic_only": bool(candidate.get("diagnostic_only")),
+                "allow_in_formal_body": bool(candidate.get("allow_in_formal_body", True)),
+                "audience_fit": candidate.get("audience_fit") or {},
+            }
+        )
+    if errors:
+        raise ValueError("Invalid report chart decision JSON: " + " | ".join(errors))
+
+    overall_summary = _ensure_sentence(decision.get("overall_summary"))
+    prose_complete = bool(normalized_rows) and all(
+        len(_normalize_report_text(item.get("selection_rationale") or "")) >= 18
+        and len(_normalize_report_text(item.get("interpretation") or "")) >= 28
+        and len(_normalize_report_text(item.get("implication") or "")) >= 28
+        for item in normalized_rows
+    ) and len(_normalize_report_text(overall_summary)) >= 40
+    requested_status = str(decision.get("status") or "").strip().lower()
+    if requested_status == "final" and not prose_complete:
+        raise ValueError("Invalid report chart decision JSON: status=final 但 selected_charts 的正式解读或 overall_summary 不完整。")
+    status = "final" if prose_complete else "draft"
+    return {
+        "generated_at": datetime.now().isoformat(timespec="seconds"),
+        "status": status,
+        "source": str(decision.get("source") or "agent-chart-selection"),
+        "report_audience": _report_audience(context, decision),
+        "selected_charts": normalized_rows,
+        "overall_summary": overall_summary,
+    }
+
+
+def _chart_review_from_decision(chart_blocks: list[dict[str, Any]], decision: dict[str, Any] | None) -> dict[str, Any] | None:
+    if not isinstance(decision, dict):
+        return None
+    if str(decision.get("status") or "").strip().lower() != "final":
+        return None
+    rows = decision.get("selected_charts")
+    if not isinstance(rows, list):
+        return None
+    by_file = {str(item.get("file")): item for item in rows if isinstance(item, dict) and item.get("file")}
+    charts: list[dict[str, Any]] = []
+    for index, block in enumerate(chart_blocks, start=1):
+        item = by_file.get(block["path"].name)
+        if not item:
+            return None
+        charts.append(
+            {
+                "index": index,
+                "file": block["path"].name,
+                "title": block["title"],
+                "interpretation": _ensure_sentence(item.get("interpretation")),
+                "implication": _ensure_sentence(item.get("implication")),
+                "caption_note": _ensure_sentence(item.get("caption_note") or "").rstrip("。"),
+            }
+        )
+    overall_summary = _ensure_sentence(decision.get("overall_summary"))
+    if len(_normalize_report_text(overall_summary)) < 40:
+        return None
+    return {
+        "generated_at": datetime.now().isoformat(timespec="seconds"),
+        "status": "final",
+        "source": str(decision.get("source") or "agent-chart-selection"),
+        "overall_summary": overall_summary,
+        "charts": charts,
+    }
+
+
+def _normalize_chart_review(chart_blocks: list[dict[str, Any]], review: dict[str, Any] | None) -> dict[str, Any]:
+    if review is None:
+        return _pending_chart_review(chart_blocks)
+    review_status = str(review.get("status") or "").strip().lower() if isinstance(review, dict) else ""
+    if review_status and review_status != "final":
+        return _pending_chart_review(chart_blocks)
+
     candidate_rows = review.get("charts") if isinstance(review, dict) else None
     review_by_file: dict[str, dict[str, Any]] = {}
     review_by_index: dict[int, dict[str, Any]] = {}
@@ -1535,33 +2041,43 @@ def _normalize_chart_review(chart_blocks: list[dict[str, Any]], review: dict[str
                 except (TypeError, ValueError):
                     continue
 
-    draft_by_file = {item["file"]: item for item in draft_review.get("charts", [])}
+    errors: list[str] = []
     normalized_charts: list[dict[str, Any]] = []
     for index, block in enumerate(chart_blocks, start=1):
-        draft_item = draft_by_file.get(block["path"].name, {})
-        item = review_by_file.get(block["path"].name) or review_by_index.get(index) or {}
+        item = review_by_file.get(block["path"].name) or review_by_index.get(index)
+        if not item:
+            errors.append(f"缺少图 {index}（{block['path'].name}）的回写内容。")
+            item = {}
+        interpretation = _ensure_sentence(item.get("interpretation"))
+        implication = _ensure_sentence(item.get("implication"))
+        if len(_normalize_report_text(interpretation)) < 28:
+            errors.append(f"图 {index}（{block['path'].name}）的 interpretation 过短。")
+        if len(_normalize_report_text(implication)) < 28:
+            errors.append(f"图 {index}（{block['path'].name}）的 implication 过短。")
         normalized_charts.append(
             {
                 "index": index,
                 "file": block["path"].name,
                 "title": block["title"],
-                "interpretation": _ensure_sentence(item.get("interpretation") or draft_item.get("interpretation")),
-                "implication": _ensure_sentence(item.get("implication") or draft_item.get("implication")),
-                "caption_note": _ensure_sentence(item.get("caption_note") or draft_item.get("caption_note")).rstrip("。"),
+                "interpretation": interpretation,
+                "implication": implication,
+                "caption_note": _ensure_sentence(item.get("caption_note") or "").rstrip("。"),
             }
         )
 
-    overall_summary = _ensure_sentence((review or {}).get("overall_summary") or draft_review.get("overall_summary"))
-    normalized = {
+    overall_summary = _ensure_sentence((review or {}).get("overall_summary"))
+    if len(_normalize_report_text(overall_summary)) < 40:
+        errors.append("overall_summary 过短，无法承担图表总体解读作用。")
+    if errors:
+        raise ValueError("Invalid chart review JSON: " + " | ".join(errors))
+
+    return {
         "generated_at": datetime.now().isoformat(timespec="seconds"),
-        "status": "final" if review else draft_review.get("status", "draft"),
-        "source": "chart-review-json" if review else draft_review.get("source", "deterministic-draft"),
+        "status": "final",
+        "source": str(review.get("source") or "agent-second-pass"),
         "overall_summary": overall_summary,
         "charts": normalized_charts,
     }
-    if not normalized["overall_summary"]:
-        normalized["overall_summary"] = "这些图表共同说明，当前对象之间存在明显结构差异，解读时应把多个指标放在一起看。"
-    return normalized
 
 
 def _chart_review_markdown(review: dict[str, Any]) -> str:
@@ -1573,6 +2089,15 @@ def _chart_review_markdown(review: dict[str, Any]) -> str:
         f"- 状态：{review.get('status', 'N/A')}",
         f"- 报告阶段：{_report_stage_label(review.get('status'))}",
     ]
+    if review.get("status") != "final":
+        lines.extend(
+            [
+                "",
+                "## 当前状态",
+                "图表解读仍待 agent 二次读图回写；当前文件只保留待填写结构，不再生成模板化解读。",
+            ]
+        )
+        return "\n".join(lines).strip() + "\n"
     lines.extend(["", "## 逐图解读"])
     for item in review.get("charts", []):
         lines.extend(
@@ -1617,8 +2142,18 @@ def _lint_chart_review_content(review: dict[str, Any]) -> list[str]:
 
 
 def _chart_blocks_with_review(context: dict[str, Any]) -> tuple[list[dict[str, Any]], str]:
-    base_blocks = _chart_blocks(context)[:MAX_FORMAL_REPORT_CHARTS]
+    base_blocks = _chart_blocks(context, context.get("report_chart_decision"))[:MAX_FORMAL_REPORT_CHARTS]
     review = context.get("chart_review") or {}
+    if str(review.get("status") or "").strip().lower() != "final":
+        return [
+            {
+                **block,
+                "interpretation": "",
+                "implication": "",
+                "caption_note": "",
+            }
+            for block in base_blocks
+        ], ""
     review_by_file = {
         str(item.get("file")): item for item in review.get("charts", []) if isinstance(item, dict) and item.get("file")
     }
@@ -1628,25 +2163,52 @@ def _chart_blocks_with_review(context: dict[str, Any]) -> tuple[list[dict[str, A
         rendered_blocks.append(
             {
                 **block,
-                "interpretation": _ensure_sentence(item.get("interpretation") or block.get("meaning")),
-                "implication": _ensure_sentence(item.get("implication") or block.get("meaning")),
+                "interpretation": _ensure_sentence(item.get("interpretation")),
+                "implication": _ensure_sentence(item.get("implication")),
                 "caption_note": _normalize_report_text(item.get("caption_note") or ""),
             }
         )
     return rendered_blocks, _ensure_sentence(review.get("overall_summary"))
 
 
-def _prepare_report_context(run_dir: Path, context: dict[str, Any], title: str) -> dict[str, Any]:
-    chart_blocks = _chart_blocks(context)[:MAX_FORMAL_REPORT_CHARTS]
+def _prepare_report_context(run_dir: Path, context: dict[str, Any], title: str) -> tuple[dict[str, Any], dict[str, Any]]:
+    chart_blocks = _chart_blocks(context, context.get("report_chart_decision"))[:MAX_FORMAL_REPORT_CHARTS]
     draft_path = run_dir / "formal_report_draft.md"
     context_path = run_dir / "report_context.json"
-    draft_review = _draft_chart_review(chart_blocks)
-    draft_markdown = _build_formal_report_draft_markdown(context, title, draft_review)
+    draft_markdown = _build_formal_report_draft_markdown(context, title, chart_blocks)
+    pending_decision = _pending_report_chart_decision(context, chart_blocks)
     write_markdown(draft_path, draft_markdown)
-    write_json(context_path, _report_context_payload(context, title, draft_review, chart_blocks))
+    write_json(context_path, _report_context_payload(context, title, chart_blocks))
     context["json_files"] = sorted(run_dir.glob("*.json"))
     context["markdown_files"] = sorted(run_dir.glob("*.md"))
-    return draft_review
+    return pending_decision, _pending_chart_review(chart_blocks)
+
+
+def _persist_report_chart_decision_artifact(run_dir: Path, decision: dict[str, Any]) -> Path:
+    decision_path = run_dir / "report_chart_decision.json"
+    if str(decision.get("status") or "").strip().lower() != "final":
+        existing = _load_report_chart_decision(decision_path)
+        if isinstance(existing, dict) and str(existing.get("status") or "").strip().lower() == "final":
+            decision_path = run_dir / "report_chart_decision.pending.json"
+    write_json(decision_path, decision)
+    return decision_path
+
+
+def _persist_chart_review_artifacts(run_dir: Path, review: dict[str, Any]) -> tuple[Path, Path]:
+    review_path = run_dir / "chart_review.json"
+    markdown_path = run_dir / "chart_review.md"
+    if str(review.get("status") or "").strip().lower() == "final":
+        write_json(review_path, review)
+        write_markdown(markdown_path, _chart_review_markdown(review))
+        return review_path, markdown_path
+
+    existing = _load_chart_review(review_path)
+    if isinstance(existing, dict) and str(existing.get("status") or "").strip().lower() == "final":
+        review_path = run_dir / "chart_review.pending.json"
+        markdown_path = run_dir / "chart_review.pending.md"
+    write_json(review_path, review)
+    write_markdown(markdown_path, _chart_review_markdown(review))
+    return review_path, markdown_path
 
 
 def _resolve_chart_review(run_dir: Path, explicit_path: Path | None) -> tuple[dict[str, Any] | None, Path | None]:
@@ -1657,14 +2219,17 @@ def _resolve_chart_review(run_dir: Path, explicit_path: Path | None) -> tuple[di
         if payload is None:
             raise ValueError(f"chart review JSON is empty or invalid: {explicit_path}")
         return payload, explicit_path if payload is not None else None
-    # Default behavior: reuse a previously generated non-draft chart review when present.
-    # This keeps run_pipeline -> formal_report_export connected without requiring an explicit flag.
-    default_path = run_dir / "chart_review.json"
-    payload = _load_chart_review(default_path)
-    if isinstance(payload, dict):
-        status = str(payload.get("status") or "").strip().lower()
-        if status in {"final", "provided"}:
-            return payload, default_path
+    return None, None
+
+
+def _resolve_report_chart_decision(run_dir: Path, explicit_path: Path | None) -> tuple[dict[str, Any] | None, Path | None]:
+    if explicit_path is not None:
+        if not explicit_path.exists():
+            raise FileNotFoundError(f"report chart decision JSON not found: {explicit_path}")
+        payload = _load_report_chart_decision(explicit_path)
+        if payload is None:
+            raise ValueError(f"report chart decision JSON is empty or invalid: {explicit_path}")
+        return payload, explicit_path if payload is not None else None
     return None, None
 
 
@@ -1780,6 +2345,17 @@ def _add_table(doc: Document, rows: list[list[str]]) -> None:
                     _set_run_font(run, size=10.2, bold=(r_index == 0))
 
 
+def _atomic_temp_output_path(output_path: Path) -> Path:
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.NamedTemporaryFile(
+        delete=False,
+        dir=str(output_path.parent),
+        prefix=f"{output_path.stem}.",
+        suffix=output_path.suffix,
+    ) as handle:
+        return Path(handle.name)
+
+
 def _render_docx(
     run_dir: Path,
     output_path: Path,
@@ -1787,6 +2363,7 @@ def _render_docx(
     title: str,
     chart_blocks: list[dict[str, Any]],
     chart_overall_summary: str,
+    report_stage: str,
     report_stage_label: str,
 ) -> None:
     doc = Document()
@@ -1830,34 +2407,49 @@ def _render_docx(
     _add_heading(doc, "三、数据质量与可用性", 1)
     _add_table(doc, _data_quality_rows(context))
 
-    _add_heading(doc, "四、核心指标与判断", 1)
-    _add_table(doc, _metric_commentary(context))
-
-    model_lines = _plain_section_rows(context, "模型结果", limit=4)
-    if model_lines:
-        _add_heading(doc, "模型结果补充说明", 2)
-        _add_bullets(doc, model_lines)
-
-    explain_lines = _plain_section_rows(context, "可解释性结论", limit=6)
-    if explain_lines:
-        _add_heading(doc, "解释性结论补充说明", 2)
-        _add_bullets(doc, explain_lines)
-
-    _add_heading(doc, "五、图表解读", 1)
+    _add_heading(doc, "四、图表解读", 1)
+    if report_stage != "final":
+        _add_paragraph(
+            doc,
+            "当前为首稿版：此处仅展示将纳入正式报告的关键图表。详细图表解读必须由 agent 结合 PNG 与 report_context.json 二次回写后，再重新导出正式版。",
+            first_line_indent=False,
+            space_after=6,
+        )
     for index, block in enumerate(chart_blocks, start=1):
         _add_heading(doc, f"图 {index}：{block['title']}", 2)
         if block["path"].exists():
             doc.add_picture(str(block["path"]), width=Inches(6.0))
-        _add_paragraph(doc, block["interpretation"], space_after=4)
-        _add_paragraph(doc, block["implication"], space_after=4)
-        if block.get("caption_note"):
+        if report_stage == "final":
+            _add_paragraph(doc, block["interpretation"], space_after=4)
+            _add_paragraph(doc, block["implication"], space_after=4)
+        if report_stage == "final" and block.get("caption_note"):
             _add_paragraph(doc, f"注释：{block['caption_note']}", size=9.6, first_line_indent=False, line_spacing=1.2, space_after=6)
-    if chart_overall_summary:
+    if report_stage == "final" and chart_overall_summary:
         _add_heading(doc, "图表总体解读", 2)
         _add_paragraph(doc, chart_overall_summary, space_after=6)
 
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    temp_path = output_path.with_name(f"{output_path.stem}.tmp{output_path.suffix}")
+    _add_heading(doc, _model_result_section_title(context), 1)
+    _add_paragraph(doc, _model_design_paragraph(context))
+    _add_heading(doc, "模型结果表", 2)
+    _add_table(doc, _metric_commentary(context))
+    _add_heading(doc, "结果解读", 2)
+    _add_paragraph(doc, _model_result_readout_paragraph(context))
+    _add_heading(doc, "模型是否可用", 2)
+    _add_paragraph(doc, _model_usability_paragraph(context))
+    _add_heading(doc, "后续建议", 2)
+    _add_paragraph(doc, _model_next_steps_paragraph(context))
+
+    model_lines = _plain_section_rows(context, "模型结果", limit=4)
+    if model_lines:
+        _add_heading(doc, "补充说明", 2)
+        _add_bullets(doc, model_lines)
+
+    explain_lines = _plain_section_rows(context, "可解释性结论", limit=6)
+    if explain_lines:
+        _add_heading(doc, "解释性补充说明", 2)
+        _add_bullets(doc, explain_lines)
+
+    temp_path = _atomic_temp_output_path(output_path)
     doc.save(temp_path)
     temp_path.replace(output_path)
 
@@ -2091,6 +2683,7 @@ def _render_pdf(
     title: str,
     chart_blocks: list[dict[str, Any]],
     chart_overall_summary: str,
+    report_stage: str,
     report_stage_label: str,
 ) -> None:
     styles = _build_pdf_styles()
@@ -2124,15 +2717,50 @@ def _render_pdf(
     story.append(Paragraph(_method_summary(context), styles["ZH-Body"]))
     story.append(_pdf_table(_source_and_scope_rows(context), styles, [3.0 * cm, 12.5 * cm]))
     story.append(Spacer(1, 0.2 * cm))
-    story.append(Paragraph("三、数据质量与核心指标", styles["ZH-Heading1"]))
+    story.append(Paragraph("三、数据质量与可用性", styles["ZH-Heading1"]))
     story.append(_pdf_table(_data_quality_rows(context), styles, [2.6 * cm, 2.4 * cm, 10.6 * cm]))
-    story.append(Spacer(1, 0.2 * cm))
+
+    story.append(PageBreak())
+    story.append(Paragraph("四、图表解读", styles["ZH-Heading1"]))
+    if report_stage != "final":
+        story.append(
+            Paragraph(
+                "当前为首稿版：此处仅展示将纳入正式报告的关键图表。详细图表解读必须由 agent 结合 PNG 与 report_context.json 二次回写后，再重新导出正式版。",
+                styles["ZH-Body"],
+            )
+        )
+    for index, block in enumerate(chart_blocks, start=1):
+        chart_story: list[Any] = [Paragraph(f"图 {index}：{block['title']}", styles["ZH-Heading2"])]
+        if block["path"].exists():
+            chart_story.append(Image(str(block["path"]), width=14.2 * cm, height=7.8 * cm))
+            chart_story.append(Spacer(1, 0.08 * cm))
+        if report_stage == "final":
+            chart_story.append(Paragraph(_normalize_report_text(block["interpretation"]), styles["ZH-Body"]))
+            chart_story.append(Paragraph(_normalize_report_text(block["implication"]), styles["ZH-Body"]))
+        if report_stage == "final" and block.get("caption_note"):
+            chart_story.append(Paragraph(f"注释：{_normalize_report_text(block['caption_note'])}", styles["ZH-Small"]))
+        chart_story.append(Spacer(1, 0.18 * cm))
+        story.append(KeepTogether(chart_story))
+    if report_stage == "final" and chart_overall_summary:
+        story.append(Paragraph("图表总体解读", styles["ZH-Heading2"]))
+        story.append(Paragraph(_normalize_report_text(chart_overall_summary), styles["ZH-Body"]))
+        story.append(Spacer(1, 0.18 * cm))
+
+    story.append(Paragraph(_model_result_section_title(context), styles["ZH-Heading1"]))
+    story.append(Paragraph(_model_design_paragraph(context), styles["ZH-Body"]))
+    story.append(Paragraph("模型结果表", styles["ZH-Heading2"]))
     story.append(_pdf_table(_metric_commentary(context), styles, [1.7 * cm, 1.9 * cm, 2.8 * cm, 2.3 * cm, 7.1 * cm]))
+    story.append(Spacer(1, 0.16 * cm))
+    story.append(Paragraph("结果解读", styles["ZH-Heading2"]))
+    story.append(Paragraph(_model_result_readout_paragraph(context), styles["ZH-Body"]))
+    story.append(Paragraph("模型是否可用", styles["ZH-Heading2"]))
+    story.append(Paragraph(_model_usability_paragraph(context), styles["ZH-Body"]))
+    story.append(Paragraph("后续建议", styles["ZH-Heading2"]))
+    story.append(Paragraph(_model_next_steps_paragraph(context), styles["ZH-Body"]))
 
     model_lines = _plain_section_rows(context, "模型结果", limit=4)
     if model_lines:
-        story.append(Spacer(1, 0.24 * cm))
-        story.append(Paragraph("模型结果补充说明", styles["ZH-Heading2"]))
+        story.append(Paragraph("补充说明", styles["ZH-Heading2"]))
         for item in model_lines:
             story.append(Paragraph(f"- {_normalize_report_text(item)}", styles["ZH-List"]))
 
@@ -2142,26 +2770,7 @@ def _render_pdf(
         for item in explain_lines:
             story.append(Paragraph(f"- {_normalize_report_text(item)}", styles["ZH-List"]))
 
-    story.append(PageBreak())
-    story.append(Paragraph("四、图表解读", styles["ZH-Heading1"]))
-    for index, block in enumerate(chart_blocks, start=1):
-        chart_story: list[Any] = [Paragraph(f"图 {index}：{block['title']}", styles["ZH-Heading2"])]
-        if block["path"].exists():
-            chart_story.append(Image(str(block["path"]), width=14.2 * cm, height=7.8 * cm))
-            chart_story.append(Spacer(1, 0.08 * cm))
-        chart_story.append(Paragraph(_normalize_report_text(block["interpretation"]), styles["ZH-Body"]))
-        chart_story.append(Paragraph(_normalize_report_text(block["implication"]), styles["ZH-Body"]))
-        if block.get("caption_note"):
-            chart_story.append(Paragraph(f"注释：{_normalize_report_text(block['caption_note'])}", styles["ZH-Small"]))
-        chart_story.append(Spacer(1, 0.18 * cm))
-        story.append(KeepTogether(chart_story))
-    if chart_overall_summary:
-        story.append(Paragraph("图表总体解读", styles["ZH-Heading2"]))
-        story.append(Paragraph(_normalize_report_text(chart_overall_summary), styles["ZH-Body"]))
-        story.append(Spacer(1, 0.18 * cm))
-
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    temp_path = output_path.with_name(f"{output_path.stem}.tmp{output_path.suffix}")
+    temp_path = _atomic_temp_output_path(output_path)
     document = SimpleDocTemplate(
         str(temp_path),
         pagesize=A4,
@@ -2242,10 +2851,17 @@ def validate_formal_report_outputs(run_dir: Path, docx_path: Path, pdf_path: Pat
     report_stage = str(context.get("report_stage") or "draft")
     chart_review = context.get("chart_review") or {}
     chart_review_status = str(chart_review.get("status") or "draft")
+    report_chart_decision = context.get("report_chart_decision") or {}
+    decision_status = str(report_chart_decision.get("status") or "draft")
     review_required = chart_review_status != "final"
     validation: dict[str, Any] = {
         "run_dir": str(run_dir),
         "report_stage": report_stage,
+        "report_chart_decision": {
+            "exists": bool(report_chart_decision),
+            "status": decision_status,
+            "warnings": [],
+        },
         "chart_review": {
             "exists": bool(context.get("chart_review")),
             "status": chart_review_status,
@@ -2266,6 +2882,27 @@ def validate_formal_report_outputs(run_dir: Path, docx_path: Path, pdf_path: Pat
         },
         "warnings": [],
     }
+
+    selected_blocks = context.get("selected_chart_blocks") or []
+    candidate_rows = _chart_candidate_rows(context)
+    _, candidate_by_file = _candidate_lookup_maps(context)
+    if candidate_rows:
+        for block in selected_blocks:
+            if not isinstance(block, dict):
+                continue
+            file_name = str((block.get("path") or Path("")).name if isinstance(block.get("path"), Path) else block.get("file") or "")
+            if not file_name:
+                continue
+            candidate = candidate_by_file.get(file_name)
+            if candidate is None:
+                validation["report_chart_decision"]["warnings"].append(f"正文图 {file_name} 未能在 chart_candidates.json 中找到对应候选元数据。")
+                continue
+            if bool(candidate.get("diagnostic_only")):
+                validation["report_chart_decision"]["warnings"].append(f"正文图 {file_name} 被标记为 diagnostic-only，不应进入正式报告正文。")
+            if not bool(candidate.get("allow_in_formal_body")):
+                validation["report_chart_decision"]["warnings"].append(f"正文图 {file_name} 在候选元数据中不允许进入正式报告正文。")
+        if report_stage == "final" and not selected_blocks:
+            validation["report_chart_decision"]["warnings"].append("当前存在 governed candidates，但正式版未选入任何正文图。")
 
     validation["chart_review"]["warnings"].extend(_lint_chart_review_content(chart_review))
     if review_required:
@@ -2321,6 +2958,7 @@ def validate_formal_report_outputs(run_dir: Path, docx_path: Path, pdf_path: Pat
     validation["warnings"].extend(validation["docx"]["warnings"])
     validation["warnings"].extend(validation["pdf"]["warnings"])
     validation["warnings"].extend(validation["chart_review"]["warnings"])
+    validation["warnings"].extend(validation["report_chart_decision"]["warnings"])
     non_blocking_fragments = ("仅做文件级检查", "PDF 文本抽取失败")
     blocking_warnings = [warning for warning in validation["warnings"] if not any(fragment in warning for fragment in non_blocking_fragments)]
     validation["passed"] = validation["docx"].get("exists") and validation["pdf"].get("exists") and not blocking_warnings
@@ -2333,25 +2971,38 @@ def export_formal_report(
     pdf_path: Path | None = None,
     title: str | None = None,
     chart_review_json_path: Path | None = None,
+    report_chart_decision_json_path: Path | None = None,
 ) -> dict[str, Any]:
     context = _load_context(run_dir)
     report_title = title or "正式中文分析报告"
     docx_output = docx_path or (run_dir / "analysis-report-zh.docx")
     pdf_output = pdf_path or (run_dir / "analysis-report-zh.pdf")
-    draft_review = _prepare_report_context(run_dir, context, report_title)
-    chart_blocks = _chart_blocks(context)[:MAX_FORMAL_REPORT_CHARTS]
+    provided_decision, _ = _resolve_report_chart_decision(run_dir, report_chart_decision_json_path)
+    normalized_decision = _normalize_report_chart_decision(context, provided_decision)
+    context["report_chart_decision"] = normalized_decision
+    pending_decision, pending_review = _prepare_report_context(run_dir, context, report_title)
+    persisted_report_chart_decision_path = _persist_report_chart_decision_artifact(run_dir, normalized_decision if provided_decision is not None else pending_decision)
+    chart_blocks = _chart_blocks(context, normalized_decision)[:MAX_FORMAL_REPORT_CHARTS]
     provided_review, _ = _resolve_chart_review(run_dir, chart_review_json_path)
-    normalized_review = _normalize_chart_review(chart_blocks, provided_review, draft_review)
+    derived_review = _chart_review_from_decision(chart_blocks, normalized_decision) if provided_review is None else None
+    if provided_review is not None:
+        normalized_review = _normalize_chart_review(chart_blocks, provided_review)
+    elif derived_review is not None:
+        normalized_review = _normalize_chart_review(chart_blocks, derived_review)
+    else:
+        normalized_review = pending_review
     report_stage = str(normalized_review.get("status") or "draft")
     context["chart_review"] = normalized_review
     context["report_stage"] = report_stage
-    write_json(run_dir / "chart_review.json", normalized_review)
-    write_markdown(run_dir / "chart_review.md", _chart_review_markdown(normalized_review))
+    context["selected_chart_blocks"] = chart_blocks
+    context["report_chart_decision"] = normalized_decision if provided_decision is not None else pending_decision
+    persisted_chart_review_path, persisted_chart_review_markdown_path = _persist_chart_review_artifacts(run_dir, normalized_review)
     context["json_files"] = sorted(run_dir.glob("*.json"))
     context["markdown_files"] = sorted(run_dir.glob("*.md"))
     chart_blocks, chart_overall_summary = _chart_blocks_with_review(context)
-    _render_docx(run_dir, docx_output, context, report_title, chart_blocks, chart_overall_summary, _report_stage_label(report_stage))
-    _render_pdf(run_dir, pdf_output, context, report_title, chart_blocks, chart_overall_summary, _report_stage_label(report_stage))
+    context["selected_chart_blocks"] = chart_blocks
+    _render_docx(run_dir, docx_output, context, report_title, chart_blocks, chart_overall_summary, report_stage, _report_stage_label(report_stage))
+    _render_pdf(run_dir, pdf_output, context, report_title, chart_blocks, chart_overall_summary, report_stage, _report_stage_label(report_stage))
     validation = validate_formal_report_outputs(run_dir, docx_output, pdf_output, context)
     write_json(run_dir / "formal_report_validation.json", validation)
     result = {
@@ -2361,8 +3012,9 @@ def export_formal_report(
         "formal_report_draft": str(run_dir / "formal_report_draft.md"),
         "report_context": str(run_dir / "report_context.json"),
         "report_stage": report_stage,
-        "chart_review": str(run_dir / "chart_review.json"),
-        "chart_review_markdown": str(run_dir / "chart_review.md"),
+        "report_chart_decision": str(persisted_report_chart_decision_path),
+        "chart_review": str(persisted_chart_review_path),
+        "chart_review_markdown": str(persisted_chart_review_markdown_path),
     }
     return result
 
@@ -2374,6 +3026,7 @@ def main() -> int:
     parser.add_argument("--pdf-path")
     parser.add_argument("--title")
     parser.add_argument("--chart-review-json")
+    parser.add_argument("--report-chart-decision-json")
     args = parser.parse_args()
 
     result = export_formal_report(
@@ -2382,6 +3035,7 @@ def main() -> int:
         pdf_path=Path(args.pdf_path).expanduser().resolve() if args.pdf_path else None,
         title=args.title,
         chart_review_json_path=Path(args.chart_review_json).expanduser().resolve() if args.chart_review_json else None,
+        report_chart_decision_json_path=Path(args.report_chart_decision_json).expanduser().resolve() if args.report_chart_decision_json else None,
     )
     print(json.dumps(result, ensure_ascii=False, indent=2))
     return 0

@@ -86,6 +86,8 @@ CHART_PREFIX_LABELS = {
     "general_health": "自评健康",
     "exercise_past_30d": "过去30天运动情况",
     "leisure_time_activity": "休闲活动",
+    "mental_unhealthy_days_bucket": "近30天心理不健康天数分组",
+    "physical_unhealthy_days_bucket": "近30天身体不健康天数分组",
     "diabetes_status": "糖尿病状态",
     "education_level": "教育程度",
     "personal_doctor": "固定医生情况",
@@ -134,6 +136,12 @@ CHART_TOKEN_LABELS = {
     "health": "健康",
     "exercise": "运动",
     "past": "过去",
+    "mental": "心理",
+    "physical": "身体",
+    "unhealthy": "不健康",
+    "days": "天数",
+    "day": "天数",
+    "bucket": "分组",
     "status": "状态",
     "diabetes": "糖尿病",
     "education": "教育",
@@ -152,6 +160,8 @@ CHART_TOKEN_LABELS = {
     "yes": "有",
     "no": "无",
 }
+
+REPORT_AUDIENCES = ["management", "operator", "analyst"]
 
 
 def _configure_runtime_environment() -> None:
@@ -363,6 +373,16 @@ def friendly_chart_target_label(name: str | None) -> str:
     return CHART_TARGET_LABELS.get(name, name)
 
 
+def friendly_field_label(name: str | None) -> str:
+    if not name:
+        return "字段"
+    if name in CHART_TARGET_LABELS:
+        return CHART_TARGET_LABELS[name]
+    if name in CHART_PREFIX_LABELS:
+        return CHART_PREFIX_LABELS[name]
+    return friendly_chart_feature_label(name)
+
+
 def friendly_chart_feature_label(name: str | None) -> str:
     if not name:
         return "变量"
@@ -379,6 +399,11 @@ def friendly_chart_feature_label(name: str | None) -> str:
                 if prefix == "age_group":
                     return friendly_value
                 return f"{friendly_prefix}={friendly_value}"
+            if prefix in {"mental_unhealthy_days_bucket", "physical_unhealthy_days_bucket"}:
+                if re.fullmatch(r"\d+_\d+", value):
+                    return f"{friendly_prefix}={value.replace('_', '-')}天"
+                if re.fullmatch(r"\d+", value):
+                    return f"{friendly_prefix}={value}天"
             if re.fullmatch(r"\d+_\d+", value):
                 if prefix == "age_group":
                     return f"{value.replace('_', '-')}岁组"
@@ -391,3 +416,10 @@ def friendly_chart_feature_label(name: str | None) -> str:
 
     tokens = [CHART_TOKEN_LABELS.get(token, token) for token in str(name).split("_")]
     return " ".join(tokens)
+
+
+def sanitize_feature_name(column: Any) -> str:
+    text = str(column)
+    text = re.sub(r"[\[\]<>]", "_", text)
+    text = re.sub(r"[^0-9a-zA-Z_]+", "_", text)
+    return text.strip("_") or "feature"

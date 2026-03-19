@@ -19,7 +19,6 @@ from common import (
     ensure_modules,
     ensure_output_dir,
     friendly_chart_feature_label,
-    friendly_chart_target_label,
     parse_json_arg,
     write_json,
     write_markdown,
@@ -28,11 +27,12 @@ from db_connectors import connection_plan, explain_driver_risks, read_sql_query
 from eda_stats import build_eda_report
 from experiment_analysis import analyze_experiment
 from explain_viz import build_storyline, save_basic_charts, select_chart_plan
-from feature_engineering import build_feature_plan
+from explain_viz import build_chart_candidates
+from feature_engineering import build_feature_plan, build_semantic_schema
 from full_process_report_export import export_process_report
 from io_router import build_file_read_plan, load_dataframe
 from model_explainability import explain_supervised_model
-from model_runner import best_model_name_from_report, run_baseline_model, select_model_candidates
+from model_runner import best_model_name_from_report, build_feature_lineage_artifact, run_baseline_model, select_model_candidates
 from report_export import export_dashboard
 from report_index import export_run_index, infer_outputs_root
 from source_research_adapter import execute_web_search_request
@@ -264,7 +264,7 @@ def _sample_frame(frame: Any, read_plan: dict[str, Any], sample_rows: int | None
     return frame, read_plan, sampling_report
 
 
-def _write_summary(run_dir: Path, task: str, read_plan: dict[str, Any], findings: list[str], risks: list[str], recommendations: list[str]) -> None:
+def _build_summary_markdown(run_dir: Path, task: str, read_plan: dict[str, Any], findings: list[str], risks: list[str], recommendations: list[str]) -> str:
     content = [
         "# 数据分析运行摘要",
         "",
@@ -277,7 +277,23 @@ def _write_summary(run_dir: Path, task: str, read_plan: dict[str, Any], findings
         "## 读取计划",
         f"```json\n{json.dumps(read_plan, ensure_ascii=False, indent=2)}\n```",
     ]
-    write_markdown(run_dir / "run_summary.md", "\n".join(content))
+    return "\n".join(content)
+
+
+def _write_summary(
+    run_dir: Path,
+    task: str,
+    read_plan: dict[str, Any],
+    findings: list[str],
+    risks: list[str],
+    recommendations: list[str],
+    *,
+    filename: str = "run_summary.md",
+) -> None:
+    write_markdown(
+        run_dir / filename,
+        _build_summary_markdown(run_dir, task, read_plan, findings, risks, recommendations),
+    )
 
 
 def _write_sampling_report(run_dir: Path, sampling_report: dict[str, Any]) -> None:
@@ -354,21 +370,28 @@ def _write_pre_model_recommendation(run_dir: Path, plan: dict[str, Any]) -> None
     write_markdown(run_dir / "pre_model_recommendation.md", "\n".join(lines))
 
 
-def _enforce_pre_model_recommendation_gate(run_dir: Path, task: str, target: str | None, plan: dict[str, Any]) -> None:
+def _enforce_pre_model_recommendation_gate(
+    run_dir: Path,
+    task: str,
+    target: str | None,
+    plan: dict[str, Any],
+    *,
+    continue_after_checkpoint: bool,
+) -> dict[str, Any]:
     """
     Hard gate: before supervised modeling starts, recommendation content must exist
     and include model reasons.
     """
     if not target or task not in {"classification", "regression"}:
-        write_json(
-            run_dir / "pre_model_gate.json",
-            {
-                "passed": True,
-                "applied": False,
-                "reason": "当前任务不进入监督建模硬门禁。",
-            },
-        )
-        return
+        payload = {
+            "passed": True,
+            "applied": False,
+            "reason": "当前任务不进入监督建模硬门禁。",
+            "awaiting_user_confirmation": False,
+            "modeling_allowed": True,
+        }
+        write_json(run_dir / "pre_model_gate.json", payload)
+        return payload
 
     errors: list[str] = []
     recommended_models = plan.get("recommended_models")
@@ -392,10 +415,13 @@ def _enforce_pre_model_recommendation_gate(run_dir: Path, task: str, target: str
         "target": target,
         "errors": errors,
         "recommended_model_count": len(recommended_models) if isinstance(recommended_models, list) else 0,
+        "awaiting_user_confirmation": len(errors) == 0 and not continue_after_checkpoint,
+        "modeling_allowed": len(errors) == 0 and continue_after_checkpoint,
     }
     write_json(run_dir / "pre_model_gate.json", payload)
     if errors:
         raise RuntimeError("Pre-model recommendation gate failed: " + " | ".join(errors))
+    return payload
 
 
 def _build_pre_model_summary(
@@ -406,12 +432,13 @@ def _build_pre_model_summary(
     eda_report: dict[str, Any],
     feature_plan: dict[str, Any],
     chart_plan: dict[str, Any],
+    target: str | None = None,
 ) -> tuple[list[str], list[str], list[str]]:
     shape = cleaning_report.get("shape", {})
     rows_used = int(shape.get("rows", getattr(df, "shape", [0])[0]))
     cols_used = int(shape.get("columns", getattr(df, "shape", [0, 0])[1]))
     target_rate = None
-    target_summary = (eda_report.get("summary_statistics") or {}).get("obese")
+    target_summary = (eda_report.get("summary_statistics") or {}).get(target) if target else None
     if isinstance(target_summary, dict) and target_summary.get("mean") is not None:
         target_rate = float(target_summary["mean"])
     candidate_models = select_model_candidates(task, is_time_series=False).get("models", []) if task in {"classification", "regression"} else []
@@ -447,7 +474,7 @@ def _build_pre_model_summary(
     for point in recommendation_plan.get("comparison_focus", []):
         recommendations_text.append(f"对比重点：{point}")
     estimated = _estimate_model_runtime(rows_used, max(len(candidate_models), 1), bool(sampling_report.get("sampled")))
-    recommendations_text.append(f"预计还需要约 {estimated} 才能完成模型比较、解释和正式报告导出。")
+    recommendations_text.append(f"预计还需要 {estimated} 才能完成模型比较、解释和正式报告导出。")
     recommendations_text.append("如果现在继续，请重新运行并加上 `--continue-after-checkpoint`；如果不继续，当前产物已经可以导出为预建模阶段报告。")
 
     risks = [
@@ -458,94 +485,6 @@ def _build_pre_model_summary(
     if chart_plan.get("charts"):
         risks.append(f"当前基础图表已生成 {len(chart_plan.get('charts', []))} 个计划项，适合先做确认再决定是否继续建模。")
     return findings, risks, recommendations_text
-
-
-def _build_chart_review(context: dict[str, Any]) -> dict[str, Any]:
-    chart_plan = context.get("chart_plan") or {}
-    explainability = context.get("explainability_report") or {}
-    stats = context.get("stats_report") or {}
-    sampling = context.get("sampling_report") or {}
-    charts = []
-    positive_rate = None
-    target_summary = (stats.get("summary_statistics") or {}).get("obese")
-    if isinstance(target_summary, dict) and target_summary.get("mean") is not None:
-        positive_rate = float(target_summary["mean"])
-
-    plan_charts = chart_plan.get("charts", []) if isinstance(chart_plan.get("charts", []), list) else []
-    png_names = {item.get("file") for item in plan_charts if isinstance(item, dict) and item.get("file")}
-    if "target_distribution.png" in png_names or positive_rate is not None:
-        charts.append(
-            {
-                "index": len(charts) + 1,
-                "file": "target_distribution.png",
-                "title": f"{friendly_chart_target_label('obese')}分布图",
-                "interpretation": f"样本中目标发生率约为 {positive_rate:.2%}，正负样本并不完全平衡，这意味着后续模型不能只看准确率。",
-                "implication": "如果继续建模，应把召回率、F1 和类别不平衡一起放进判断标准。",
-                "caption_note": "类别不平衡（正类占比）",
-            }
-        )
-
-    shap_report = explainability.get("shap") or {}
-    top_features = shap_report.get("top_features") or []
-    if isinstance(top_features, list) and top_features and "shap_bar.png" in png_names:
-        top_feature_names = "、".join(friendly_chart_feature_label(item.get("feature")) for item in top_features[:3] if item.get("feature"))
-        charts.append(
-            {
-                "index": len(charts) + 1,
-                "file": "shap_bar.png",
-                "title": "SHAP 特征重要性图",
-                "interpretation": f"SHAP 排名前几位的变量主要是 {top_feature_names}，说明模型主要依赖这些健康状态和行为变量来区分肥胖风险。",
-                "implication": "这类结果更适合用来解释模型为什么这样判断，不应直接当作因果关系。",
-                "caption_note": "SHAP（衡量变量对模型预测影响强弱的解释方法）",
-            }
-        )
-
-    pdp_features = explainability.get("partial_dependence_features") or []
-    for feature in pdp_features:
-        file_name = f"pdp_{feature}.png"
-        if file_name not in png_names:
-            continue
-        friendly_feature = friendly_chart_feature_label(feature)
-        charts.append(
-            {
-                "index": len(charts) + 1,
-                "file": file_name,
-                "title": f"{friendly_feature}部分依赖图",
-                "interpretation": f"这张图展示了 {friendly_feature} 变化时，模型预测的边际变化方向，适合和 SHAP 一起理解该变量的作用。",
-                "implication": f"如果 {friendly_feature} 位于重要性靠前的位置，它更值得在后续解释里单独复核。",
-                "caption_note": "PDP（部分依赖图，用来观察单个变量变化时模型预测如何变化）",
-            }
-        )
-
-    if not charts and png_names:
-        for file_name in sorted(png_names):
-            charts.append(
-                {
-                    "index": len(charts) + 1,
-                    "file": file_name,
-                    "title": file_name.replace("_", " ").replace(".png", ""),
-                    "interpretation": "该图展示了当前分析阶段已生成的可视化结果。",
-                    "implication": "建议结合对应 JSON 结果一起阅读。",
-                    "caption_note": "",
-                }
-            )
-
-    overall = "这组图把目标分布、特征重要性和局部边际影响串起来看，可以先判断类别是否失衡，再判断模型主要依赖哪些变量，最后看这些变量在边际上的方向性变化。"
-    if sampling.get("sampled"):
-        overall = f"这组图基于简单随机抽样（simple random sample）生成，适合先做预览判断；抽样规模为 {sampling.get('sample_rows_used', 0):,} 行。 " + overall
-    return {
-        "generated_at": "auto",
-        "status": "provided",
-        "source": "contextual-auto-review",
-        "overall_summary": overall,
-        "charts": charts,
-    }
-
-
-def _write_chart_review(run_dir: Path, context: dict[str, Any]) -> dict[str, Any]:
-    review = _build_chart_review(context)
-    write_json(run_dir / "chart_review.json", review)
-    return review
 
 
 def _run_research_workflows(research_config: Any, run_dir: Path) -> dict[str, Any]:
@@ -595,6 +534,35 @@ def _finish_run(
     export_run_index(infer_outputs_root(run_dir))
 
 
+def _resolve_data_scope(args, parser: argparse.ArgumentParser) -> None:
+    if getattr(args, "dataset", None):
+        return
+    scope = getattr(args, "data_scope", None)
+    if getattr(args, "use_full_data", False):
+        if scope and scope != "full":
+            parser.error("--use-full-data 与 --data-scope sample 不能同时使用。")
+        scope = "full"
+    if not args.input_path and not (args.db_url and args.query):
+        args.data_scope = scope
+        args.sample_rows = None
+        return
+    if scope is None:
+        parser.error("开始分析前必须显式指定 `--data-scope sample` 或 `--data-scope full`，不能再默认直接开跑。")
+    if scope == "full":
+        if args.sample_rows is not None:
+            parser.error("--data-scope full 时不要再传 `--sample-rows`。")
+        args.data_scope = "full"
+        args.sample_rows = None
+        return
+    sample_rows = args.sample_rows if args.sample_rows and args.sample_rows > 0 else 5000
+    args.data_scope = "sample"
+    args.sample_rows = sample_rows
+
+
+def _requires_supervised_checkpoint(task: str, target: str | None) -> bool:
+    return bool(target and task in {"classification", "regression"})
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Run the data-analysis skill pipeline.")
     parser.add_argument("--dataset", choices=["wdi"])
@@ -606,8 +574,9 @@ def main() -> int:
     parser.add_argument("--time-col")
     parser.add_argument("--output-dir")
     parser.add_argument("--config-json")
-    parser.add_argument("--sample-rows", type=int, default=5000)
-    parser.add_argument("--use-full-data", action="store_true", help="Use the full input population without sampling.")
+    parser.add_argument("--data-scope", choices=["sample", "full"], help="Explicitly choose whether to run on a sample or the full population.")
+    parser.add_argument("--sample-rows", type=int, help="Sample size to use when `--data-scope sample` is selected. Defaults to 5000.")
+    parser.add_argument("--use-full-data", action="store_true", help="Deprecated alias for `--data-scope full`.")
     parser.add_argument("--plan-only", action="store_true")
     parser.add_argument(
         "--pre-model-checkpoint",
@@ -636,6 +605,7 @@ def main() -> int:
     parser.add_argument("--process-report-title")
     parser.set_defaults(process_report=True)
     args = parser.parse_args()
+    _resolve_data_scope(args, parser)
 
     config = parse_json_arg(args.config_json)
 
@@ -729,12 +699,16 @@ def main() -> int:
     _write_run_status(run_dir, stage="eda-and-features", task=task)
     cleaning_report = build_cleaning_report(df, time_col=args.time_col, target=args.target)
     eda_report = build_eda_report(df, time_col=args.time_col, target=args.target)
+    semantic_schema = build_semantic_schema(df, target=args.target, time_col=args.time_col)
+    feature_lineage = build_feature_lineage_artifact(df, target=args.target)
     feature_plan = build_feature_plan(df, target=args.target, time_col=args.time_col)
     if isinstance(feature_plan.get("recommendations"), list):
         feature_plan["recommendations"] = [_localize_feature_recommendation(str(item)) for item in feature_plan["recommendations"]]
     chart_plan = select_chart_plan(df, task=task, target=args.target, time_col=args.time_col, config=config)
     write_json(run_dir / "cleaning_report.json", cleaning_report)
     write_json(run_dir / "stats_report.json", eda_report)
+    write_json(run_dir / "semantic_schema.json", semantic_schema)
+    write_json(run_dir / "feature_lineage.json", feature_lineage)
     write_json(run_dir / "feature_plan.json", feature_plan)
     write_json(run_dir / "chart_plan.json", chart_plan)
 
@@ -746,20 +720,19 @@ def main() -> int:
             rendered_chart_plan = json.loads(chart_plan_path.read_text())
         except Exception:  # noqa: BLE001
             rendered_chart_plan = chart_plan
-
-    _write_chart_review(
-        run_dir,
-        {
-            "chart_plan": rendered_chart_plan,
-            "explainability_report": {},
-            "stats_report": eda_report,
-            "sampling_report": sampling_report,
-        },
+    chart_candidates = build_chart_candidates(
+        rendered_chart_plan,
+        target=args.target,
+        time_col=args.time_col,
+        semantic_schema=semantic_schema,
+        feature_lineage=feature_lineage,
+        report_audience=str(config.get("report_audience") or "management"),
     )
+    write_json(run_dir / "chart_candidates.json", chart_candidates)
 
     rows_used_for_plan = int(getattr(df, "shape", [0])[0]) if hasattr(df, "shape") else 0
     target_rate_for_plan = None
-    target_summary = (eda_report.get("summary_statistics") or {}).get("obese")
+    target_summary = (eda_report.get("summary_statistics") or {}).get(args.target) if args.target else None
     if isinstance(target_summary, dict) and target_summary.get("mean") is not None:
         target_rate_for_plan = float(target_summary["mean"])
     pre_model_candidates = select_model_candidates(task, is_time_series=False).get("models", []) if task in {"classification", "regression"} else []
@@ -777,23 +750,50 @@ def main() -> int:
         for item in pre_model_plan["recommended_models"]:
             _log(f"  - {item['model_label']}: {item['reason']}")
 
-    if args.pre_model_checkpoint and not args.continue_after_checkpoint:
-        checkpoint_findings, checkpoint_risks, checkpoint_recommendations = _build_pre_model_summary(
-            task,
-            df,
-            sampling_report,
-            cleaning_report,
-            eda_report,
-            feature_plan,
-            rendered_chart_plan,
-        )
+    checkpoint_findings, checkpoint_risks, checkpoint_recommendations = _build_pre_model_summary(
+        task,
+        df,
+        sampling_report,
+        cleaning_report,
+        eda_report,
+        feature_plan,
+        rendered_chart_plan,
+        target=args.target,
+    )
+    _write_summary(
+        run_dir,
+        task,
+        _localize_read_plan_for_summary(read_artifact),
+        checkpoint_findings,
+        checkpoint_risks,
+        checkpoint_recommendations,
+        filename="pre_model_checkpoint_summary.md",
+    )
+    gate_payload = _enforce_pre_model_recommendation_gate(
+        run_dir,
+        task,
+        args.target,
+        pre_model_plan,
+        continue_after_checkpoint=args.continue_after_checkpoint,
+    )
+
+    checkpoint_required = _requires_supervised_checkpoint(task, args.target)
+    if (checkpoint_required or args.pre_model_checkpoint) and not args.continue_after_checkpoint:
         _write_summary(run_dir, task, _localize_read_plan_for_summary(read_artifact), checkpoint_findings, checkpoint_risks, checkpoint_recommendations)
         _finish_run(run_dir, args.formal_report, args.report_title, args.process_report, args.process_report_title)
-        _write_run_status(run_dir, stage="completed", task=task, extra={"mode": "checkpoint"})
+        _write_run_status(
+            run_dir,
+            stage="awaiting-pre-model-confirmation",
+            task=task,
+            extra={
+                "mode": "checkpoint",
+                "checkpoint_required": checkpoint_required,
+                "modeling_allowed": gate_payload.get("modeling_allowed", False),
+            },
+        )
         print(run_dir, flush=True)
         return 0
 
-    _enforce_pre_model_recommendation_gate(run_dir, task, args.target, pre_model_plan)
     _log("Running model training / evaluation...")
     _write_run_status(run_dir, stage="modeling", task=task)
     model_report: dict[str, Any] = {}
@@ -890,6 +890,16 @@ def main() -> int:
             rendered_chart_plan = json.loads(chart_plan_path.read_text())
         except Exception:  # noqa: BLE001
             rendered_chart_plan = chart_plan
+    chart_candidates = build_chart_candidates(
+        rendered_chart_plan,
+        target=args.target,
+        time_col=args.time_col,
+        semantic_schema=semantic_schema,
+        feature_lineage=feature_lineage,
+        explainability_report=explainability_report,
+        report_audience=str(config.get("report_audience") or "management"),
+    )
+    write_json(run_dir / "chart_candidates.json", chart_candidates)
 
     findings = [
         f"已加载 {int(df.shape[0])} 行、{int(df.shape[1])} 列数据。",
@@ -1073,15 +1083,6 @@ def main() -> int:
     if not risks:
         risks.append("当前运行未发现明显阻断性问题。")
 
-    _write_chart_review(
-        run_dir,
-        {
-            "chart_plan": rendered_chart_plan,
-            "explainability_report": explainability_report,
-            "stats_report": eda_report,
-            "sampling_report": sampling_report,
-        },
-    )
     _write_summary(run_dir, task, _localize_read_plan_for_summary(read_artifact), findings, risks, recommendations)
     _log("Exporting dashboard / process report / formal report...")
     _write_run_status(run_dir, stage="exporting", task=task)

@@ -5,10 +5,13 @@ from pathlib import Path
 from typing import Any
 
 from common import (
+    REPORT_AUDIENCES,
     configure_matplotlib_defaults,
+    friendly_field_label,
     friendly_chart_feature_label,
     friendly_chart_target_label,
     module_available,
+    sanitize_feature_name,
     write_json,
 )
 
@@ -142,6 +145,163 @@ def _configure_chinese_font():
         "Arial Unicode MS",
     ]
     return configure_matplotlib_defaults(preferred_fonts)
+
+
+def _semantic_field_map(semantic_schema: dict[str, Any] | None) -> dict[str, dict[str, Any]]:
+    fields = (semantic_schema or {}).get("fields", [])
+    return {str(item.get("field_name")): item for item in fields if isinstance(item, dict) and item.get("field_name")}
+
+
+def _lineage_map(feature_lineage: dict[str, Any] | None) -> dict[str, dict[str, Any]]:
+    features = (feature_lineage or {}).get("features", [])
+    return {str(item.get("feature_name")): item for item in features if isinstance(item, dict) and item.get("feature_name")}
+
+
+def _candidate_audience_fit(section_role: str, diagnostic_only: bool) -> dict[str, str]:
+    if diagnostic_only:
+        return {"management": "low", "operator": "low", "analyst": "high"}
+    if section_role in {"core_evidence", "decision_support"}:
+        return {"management": "high", "operator": "high", "analyst": "medium"}
+    if section_role in {"context", "risk_boundary"}:
+        return {"management": "high", "operator": "medium", "analyst": "medium"}
+    if section_role == "mechanism":
+        return {"management": "medium", "operator": "medium", "analyst": "high"}
+    return {audience: "medium" for audience in REPORT_AUDIENCES}
+
+
+def _candidate_policy(chart_type: str, file_name: str | None = None) -> dict[str, Any]:
+    if chart_type == "partial_dependence":
+        return {"section_role": "mechanism", "diagnostic_only": True, "allow_in_formal_body": False, "business_value_score": 45, "suitability_score": 50}
+    if chart_type == "feature_importance":
+        return {"section_role": "mechanism", "diagnostic_only": False, "allow_in_formal_body": True, "business_value_score": 70, "suitability_score": 72}
+    if chart_type in {"line", "retention_curve", "did_trend", "synthetic_path", "synthetic_gap"}:
+        return {"section_role": "core_evidence", "diagnostic_only": False, "allow_in_formal_body": True, "business_value_score": 88, "suitability_score": 86}
+    if chart_type in {"histogram"}:
+        return {"section_role": "context", "diagnostic_only": False, "allow_in_formal_body": True, "business_value_score": 68, "suitability_score": 72}
+    if chart_type in {"heatmap", "cohort_heatmap"}:
+        return {"section_role": "core_evidence", "diagnostic_only": False, "allow_in_formal_body": True, "business_value_score": 82, "suitability_score": 80}
+    if chart_type in {"correlation_heatmap", "scatter"}:
+        return {"section_role": "diagnostic", "diagnostic_only": True, "allow_in_formal_body": False, "business_value_score": 40, "suitability_score": 45}
+    if chart_type in {"bar", "horizontal_bar", "driver_bar", "cluster_size_bar", "uplift_bucket_lift", "association_rule_bar", "variant_comparison_bar"}:
+        return {"section_role": "decision_support", "diagnostic_only": False, "allow_in_formal_body": True, "business_value_score": 84, "suitability_score": 82}
+    if file_name == "target_distribution.png":
+        return {"section_role": "context", "diagnostic_only": False, "allow_in_formal_body": True, "business_value_score": 70, "suitability_score": 74}
+    return {"section_role": "diagnostic", "diagnostic_only": True, "allow_in_formal_body": False, "business_value_score": 35, "suitability_score": 40}
+
+
+def _candidate_evidence_links(chart_type: str, file_name: str | None, target: str | None = None) -> list[str]:
+    if file_name == "target_distribution.png":
+        return [f"stats_report.json#summary_statistics.{target}" if target else "stats_report.json#summary_statistics"]
+    if file_name == "shap_bar.png" or chart_type == "feature_importance":
+        return ["explainability_report.json#shap.top_features", "model_report.json#models"]
+    if chart_type == "partial_dependence":
+        return ["explainability_report.json#partial_dependence_features"]
+    if chart_type in {"line", "retention_curve"}:
+        return ["chart_plan.json", "stats_report.json"]
+    if chart_type in {"variant_comparison_bar"}:
+        return ["experiment_report.json#metrics"]
+    return ["chart_plan.json"]
+
+
+def _candidate_source_fields(
+    item: dict[str, Any],
+    target: str | None,
+    time_col: str | None,
+    lineage_by_feature: dict[str, dict[str, Any]],
+    semantic_fields: dict[str, dict[str, Any]],
+    explainability_report: dict[str, Any] | None = None,
+) -> list[str]:
+    file_name = str(item.get("file") or "")
+    chart_type = str(item.get("chart") or "chart")
+    if file_name == "target_distribution.png" and target:
+        return [target]
+    if file_name == "time_series.png":
+        return [field for field in [time_col, target] if field]
+    if file_name.startswith("pdp_") and file_name.endswith(".png"):
+        feature_name = sanitize_feature_name(file_name.removeprefix("pdp_").removesuffix(".png"))
+        source_field = (lineage_by_feature.get(feature_name) or {}).get("source_field")
+        return [str(source_field)] if source_field else [feature_name]
+    if file_name == "shap_bar.png" and explainability_report:
+        fields: list[str] = []
+        shap_rows = ((explainability_report.get("shap") or {}).get("top_features") or [])[:5]
+        for row in shap_rows:
+            feature_name = sanitize_feature_name(row.get("feature"))
+            source_field = (lineage_by_feature.get(feature_name) or {}).get("source_field")
+            if source_field and source_field not in fields:
+                fields.append(str(source_field))
+        return fields
+    for key in ("x", "y"):
+        value = item.get(key)
+        if value and str(value) in semantic_fields:
+            return [str(value)]
+    return []
+
+
+def build_chart_candidates(
+    chart_plan: dict[str, Any],
+    *,
+    target: str | None = None,
+    time_col: str | None = None,
+    semantic_schema: dict[str, Any] | None = None,
+    feature_lineage: dict[str, Any] | None = None,
+    explainability_report: dict[str, Any] | None = None,
+    report_audience: str = "management",
+) -> dict[str, Any]:
+    semantic_fields = _semantic_field_map(semantic_schema)
+    lineage_by_feature = _lineage_map(feature_lineage)
+    chart_items = chart_plan.get("charts") or []
+    candidates: list[dict[str, Any]] = []
+    for index, item in enumerate(chart_items, start=1):
+        if not isinstance(item, dict):
+            continue
+        chart_type = str(item.get("chart") or "chart")
+        file_name = item.get("file")
+        source_fields = _candidate_source_fields(
+            item,
+            target=target,
+            time_col=time_col,
+            lineage_by_feature=lineage_by_feature,
+            semantic_fields=semantic_fields,
+            explainability_report=explainability_report,
+        )
+        derived_features: list[str] = []
+        if file_name and str(file_name).startswith("pdp_"):
+            derived_features.append(sanitize_feature_name(str(file_name).removeprefix("pdp_").removesuffix(".png")))
+        policy = _candidate_policy(chart_type, file_name=str(file_name) if file_name else None)
+        audience_fit = _candidate_audience_fit(policy["section_role"], bool(policy["diagnostic_only"]))
+        if report_audience in audience_fit and audience_fit[report_audience] == "low":
+            policy["suitability_score"] = max(int(policy["suitability_score"]) - 10, 0)
+        source_labels = [friendly_field_label(field) for field in source_fields if field]
+        candidates.append(
+            {
+                "chart_id": f"{index:02d}_{sanitize_feature_name(file_name or chart_type)}",
+                "file": file_name,
+                "title": item.get("title") or file_name or chart_type,
+                "chart_type": chart_type,
+                "chart_intent": policy["section_role"],
+                "section_role": policy["section_role"],
+                "source_fields": source_fields,
+                "source_field_labels": source_labels,
+                "derived_features": derived_features,
+                "audience_fit": audience_fit,
+                "diagnostic_only": bool(policy["diagnostic_only"]),
+                "allow_in_formal_body": bool(policy["allow_in_formal_body"]),
+                "report_audience": report_audience,
+                "evidence_links": _candidate_evidence_links(chart_type, str(file_name) if file_name else None, target=target),
+                "business_value_score": int(policy["business_value_score"]),
+                "suitability_score": int(policy["suitability_score"]),
+                "how_to_read": item.get("how_to_read"),
+                "meaning": item.get("meaning") or item.get("reason"),
+                "rendered": bool(file_name),
+            }
+        )
+    return {
+        "version": 1,
+        "task": chart_plan.get("task"),
+        "report_audience": report_audience,
+        "rendered": bool(chart_plan.get("rendered", False)),
+        "candidates": candidates,
+    }
 
 
 def _chart_entry_for_file(file_name: str, task: str, target: str | None = None, time_col: str | None = None, config: dict[str, Any] | None = None) -> dict[str, Any]:

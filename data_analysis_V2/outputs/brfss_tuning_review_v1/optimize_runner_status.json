@@ -1,0 +1,8 @@
+{
+  "event_path": "/Users/sk/program/useful_skill/data_analysis_V2/outputs/brfss_tuning_review_v1/optimize_runner_events.jsonl",
+  "heartbeat_path": "/Users/sk/program/useful_skill/data_analysis_V2/outputs/brfss_tuning_review_v1/optimize_runner_heartbeat.jsonl",
+  "job_name": "optimize_runner",
+  "last_heartbeat_at": "2026-03-19T04:52:15+00:00",
+  "status": "running",
+  "updated_at": "2026-03-19T04:52:15+00:00"
+}

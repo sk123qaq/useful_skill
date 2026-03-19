@@ -1,0 +1,11 @@
+{"stage": "initialized", "status": "running", "updated_at": "2026-03-19T04:39:42+00:00"}
+{"row_count": 58763, "stage": "scouting", "status": "running", "updated_at": "2026-03-19T04:39:42+00:00"}
+{"required_decision_file": "data_processing_decision.json", "route": "predictive", "stage": "awaiting_agent_review_after_scout", "status": "completed", "updated_at": "2026-03-19T04:39:42+00:00"}
+{"stage": "initialized", "status": "running", "updated_at": "2026-03-19T04:40:20+00:00"}
+{"row_count": 58763, "stage": "scouting", "status": "running", "updated_at": "2026-03-19T04:40:20+00:00"}
+{"stage": "baselining", "status": "running", "updated_at": "2026-03-19T04:40:20+00:00"}
+{"required_decision_file": "modeling_decision.json", "route": "predictive", "stage": "awaiting_agent_review_after_baseline", "status": "completed", "updated_at": "2026-03-19T04:40:43+00:00"}
+{"stage": "initialized", "status": "running", "updated_at": "2026-03-19T04:41:21+00:00"}
+{"row_count": 58763, "stage": "scouting", "status": "running", "updated_at": "2026-03-19T04:41:21+00:00"}
+{"stage": "baselining", "status": "running", "updated_at": "2026-03-19T04:41:21+00:00"}
+{"agent_decision": "tune_models", "route": "predictive", "stage": "agent_halt_after_baseline", "status": "completed", "updated_at": "2026-03-19T04:41:21+00:00"}

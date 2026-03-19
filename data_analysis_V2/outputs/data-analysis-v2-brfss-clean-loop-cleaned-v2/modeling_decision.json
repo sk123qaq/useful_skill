@@ -1,0 +1,14 @@
+{
+  "stage": "after_baseline",
+  "decision": "tune_models",
+  "summary": "Data quality blockers were reduced, but the current baseline gain is still too limited to support reporting.",
+  "reasons": [
+    "The cleaned dataset is safer to model because duplicate rows are now zero and soft proxy fields are gone.",
+    "The best baseline model still provides only a limited absolute lift over the dummy baseline.",
+    "Additional threshold analysis, richer metrics, and model tuning are still needed before any usable conclusion."
+  ],
+  "actions": [
+    "Stop report generation at this checkpoint.",
+    "Proceed to a tuning and evaluation phase instead of reporting."
+  ]
+}

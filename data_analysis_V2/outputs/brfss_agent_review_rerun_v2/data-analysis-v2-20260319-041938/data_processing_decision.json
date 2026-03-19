@@ -1,0 +1,15 @@
+{
+  "actions": [
+    "Run baseline comparison before any stronger claim.",
+    "Do not interpret current feature list as a validated feature set.",
+    "Reassess business usefulness after baseline before allowing reporting."
+  ],
+  "decision": "continue_to_baseline",
+  "reasons": [
+    "Missingness is zero and no hard leakage was detected.",
+    "Duplicate rows exist but are relatively limited in proportion and do not by themselves justify blocking baseline comparison.",
+    "The current candidate feature set is still a raw all-non-target set, so usefulness must be re-judged after baseline rather than assumed."
+  ],
+  "stage": "after_scout",
+  "summary": "Continue to baseline, but carry forward explicit concerns about duplicate handling, lack of formal feature selection, and the need to reassess usefulness after baseline."
+}

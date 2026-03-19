@@ -3,11 +3,11 @@ from __future__ import annotations
 
 import contextlib
 import io
-import re
 from typing import Any
 
-from common import module_available
+from common import module_available, sanitize_feature_name
 from evaluate import choose_cv
+from feature_engineering import build_raw_feature_lineage, encode_categoricals
 
 
 def select_model_candidates(task: str, is_time_series: bool = False) -> dict[str, Any]:
@@ -48,32 +48,27 @@ def select_model_candidates(task: str, is_time_series: bool = False) -> dict[str
     }
 
 
-def _prepare_matrix(df, target: str):
+def _prepare_matrix(df, target: str, return_lineage: bool = False):
     if target not in df.columns:
         raise ValueError(f"Unknown target column: {target}")
 
     model_df = df.dropna(subset=[target]).copy()
     feature_df = model_df.drop(columns=[target])
     encoded = feature_df.copy()
-    categorical_columns = list(encoded.select_dtypes(exclude=["number", "bool"]).columns)
+    lineage: list[dict[str, Any]] = []
+    categorical_columns = list(feature_df.select_dtypes(exclude=["number", "bool"]).columns)
     if categorical_columns:
-        encoded = encoded.fillna({col: "__MISSING__" for col in categorical_columns})
-        encoded = encoded.astype({col: "string" for col in categorical_columns})
-        encoded = encoded.assign(**{col: encoded[col].astype("string") for col in categorical_columns})
-        encoded = encoded.pipe(lambda frame: __import__("pandas").get_dummies(frame, dummy_na=True))
+        encoded, lineage = encode_categoricals(feature_df, columns=categorical_columns, dummy_na=True, return_lineage=True)
     else:
         encoded = encoded.fillna(0)
+        lineage = build_raw_feature_lineage(feature_df).get("features", [])
 
-    encoded.columns = [_sanitize_feature_name(column) for column in encoded.columns]
+    encoded.columns = [sanitize_feature_name(column) for column in encoded.columns]
+    encoded = encoded.fillna(0)
 
+    if return_lineage:
+        return encoded, model_df[target], lineage
     return encoded, model_df[target]
-
-
-def _sanitize_feature_name(column: Any) -> str:
-    text = str(column)
-    text = re.sub(r"[\[\]<>]", "_", text)
-    text = re.sub(r"[^0-9a-zA-Z_]+", "_", text)
-    return text.strip("_") or "feature"
 
 
 def build_model_catalog(task: str) -> dict[str, Any]:
@@ -178,7 +173,7 @@ def fit_selected_model(df, target: str, task: str, model_name: str | None = None
     if task not in {"classification", "regression"}:
         raise ValueError("Explainability fitting supports classification and regression only.")
 
-    X, y = _prepare_matrix(df, target)
+    X, y, feature_lineage = _prepare_matrix(df, target, return_lineage=True)
     models = build_model_catalog(task)
     selected_name = model_name or next(iter(models.keys()), None)
     if not selected_name or selected_name not in models:
@@ -203,6 +198,7 @@ def fit_selected_model(df, target: str, task: str, model_name: str | None = None
         "y_train": y_train,
         "y_test": y_test,
         "feature_names": list(X.columns),
+        "feature_lineage": feature_lineage,
     }
 
 
@@ -213,7 +209,7 @@ def run_baseline_model(df, target: str, task: str, time_col: str | None = None) 
     if is_time_series:
         return select_model_candidates(task, is_time_series=True)
 
-    X, y = _prepare_matrix(df, target)
+    X, y, feature_lineage = _prepare_matrix(df, target, return_lineage=True)
 
     if task == "classification":
         models = build_model_catalog(task)
@@ -230,6 +226,7 @@ def run_baseline_model(df, target: str, task: str, time_col: str | None = None) 
         "task": task,
         "n_rows_used": int(len(y)),
         "n_features_used": int(X.shape[1]),
+        "feature_lineage": feature_lineage,
         "models": {},
     }
     for name, model in models.items():
@@ -244,3 +241,23 @@ def run_baseline_model(df, target: str, task: str, time_col: str | None = None) 
         except Exception as exc:
             results["models"][name] = {"error": str(exc)}
     return results
+
+
+def build_feature_lineage_artifact(df, target: str | None = None) -> dict[str, Any]:
+    if target and target in getattr(df, "columns", []):
+        encoded, y, lineage = _prepare_matrix(df, target, return_lineage=True)
+        return {
+            "version": 1,
+            "target_field": target,
+            "n_rows_used": int(len(y)),
+            "n_features": int(encoded.shape[1]),
+            "features": lineage,
+        }
+    raw_lineage = build_raw_feature_lineage(df, target=target)
+    return {
+        "version": 1,
+        "target_field": target,
+        "n_rows_used": int(getattr(df, "shape", [0])[0]) if hasattr(df, "shape") else 0,
+        "n_features": int(len(raw_lineage.get("features", []))),
+        "features": raw_lineage.get("features", []),
+    }

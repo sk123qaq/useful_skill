@@ -1,0 +1,53 @@
+{
+  "column_count": 16,
+  "columns": [
+    "state",
+    "sex",
+    "age_group",
+    "general_health",
+    "personal_doctor",
+    "medical_cost_barrier",
+    "recent_checkup",
+    "exercise_past_30d",
+    "leisure_time_activity",
+    "ever_smoked_100",
+    "income_bracket",
+    "education_level",
+    "diabetes_status",
+    "heart_disease",
+    "asthma_status",
+    "obese"
+  ],
+  "duplicate_rate": 0.013431,
+  "duplicate_rows": 800,
+  "high_cardinality_fields": [],
+  "missingness": {
+    "age_group": 0.0,
+    "asthma_status": 0.0,
+    "diabetes_status": 0.0,
+    "education_level": 0.0,
+    "ever_smoked_100": 0.0,
+    "exercise_past_30d": 0.0,
+    "general_health": 0.0,
+    "heart_disease": 0.0,
+    "income_bracket": 0.0,
+    "leisure_time_activity": 0.0,
+    "medical_cost_barrier": 0.0,
+    "obese": 0.0,
+    "personal_doctor": 0.0,
+    "recent_checkup": 0.0,
+    "sex": 0.0,
+    "state": 0.0
+  },
+  "row_count": 59563,
+  "suspicious_fields": [],
+  "target_distribution": {
+    "available": true,
+    "top_counts": {
+      "0": 39261,
+      "1": 20302
+    },
+    "unique_values": 2
+  },
+  "time_column_present": false
+}

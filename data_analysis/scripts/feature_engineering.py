@@ -3,20 +3,187 @@ from __future__ import annotations
 
 from typing import Any
 
-from common import ensure_modules, module_available
+from common import REPORT_AUDIENCES, ensure_modules, friendly_field_label, module_available, sanitize_feature_name
 
 
-def encode_categoricals(df, columns: list[str] | None = None, dummy_na: bool = True):
+ORDERED_FIELD_HINTS = {
+    "age",
+    "grade",
+    "level",
+    "stage",
+    "bucket",
+    "band",
+    "rank",
+    "score",
+}
+
+ORDERED_VALUE_SEQUENCES = [
+    ["poor", "fair", "good", "very_good", "excellent"],
+    ["very_poor", "poor", "fair", "good", "very_good", "excellent"],
+    ["low", "medium", "high"],
+    ["no", "prediabetes", "yes"],
+]
+
+
+def _non_null_unique_values(series, limit: int = 50) -> list[str]:
+    if not hasattr(series, "dropna"):
+        return []
+    values = series.dropna()
+    if hasattr(values, "empty") and values.empty:
+        return []
+    try:
+        unique = values.astype("string").unique().tolist()
+    except Exception:  # noqa: BLE001
+        unique = [str(item) for item in values.unique().tolist()] if hasattr(values, "unique") else []
+    return [str(item).strip() for item in unique[:limit] if str(item).strip()]
+
+
+def _matches_ordered_sequence(unique_values: list[str]) -> bool:
+    normalized = {value.lower().replace(" ", "_").replace("-", "_") for value in unique_values}
+    if len(normalized) < 2:
+        return False
+    for sequence in ORDERED_VALUE_SEQUENCES:
+        sequence_set = set(sequence)
+        if normalized.issubset(sequence_set):
+            return True
+    return False
+
+
+def infer_semantic_type(series, field_name: str | None = None) -> str:
+    field_key = str(field_name or "").lower()
+    if getattr(series, "dtype", None) is not None and str(series.dtype) == "bool":
+        return "binary"
+
+    unique_values = _non_null_unique_values(series)
+    unique_count = len(unique_values)
+    if unique_count <= 2 and unique_count > 0:
+        return "binary"
+
+    if "datetime" in str(getattr(series, "dtype", "")).lower() or field_key.endswith("_date") or field_key.endswith("_time"):
+        return "time"
+
+    if str(getattr(series, "dtype", "")).lower() in {"int64", "int32", "float64", "float32", "int", "float"}:
+        return "continuous"
+
+    if any(hint in field_key for hint in ORDERED_FIELD_HINTS):
+        return "ordered_category"
+
+    if _matches_ordered_sequence(unique_values):
+        return "ordered_category"
+
+    return "nominal_category"
+
+
+def build_semantic_schema(df, target: str | None = None, time_col: str | None = None) -> dict[str, Any]:
+    fields: list[dict[str, Any]] = []
+    for column in df.columns:
+        semantic_type = "time" if time_col and column == time_col else infer_semantic_type(df[column], field_name=column)
+        role = "target" if target and column == target else "time" if time_col and column == time_col else "measure" if semantic_type == "continuous" else "dimension"
+        unique_count = None
+        try:
+            unique_count = int(df[column].nunique(dropna=True))
+        except Exception:  # noqa: BLE001
+            unique_count = None
+        missing_ratio = None
+        try:
+            missing_ratio = float(df[column].isna().mean())
+        except Exception:  # noqa: BLE001
+            missing_ratio = None
+        allowed_chart_intents = {
+            "binary": ["comparison", "ranking", "risk_boundary"],
+            "ordered_category": ["comparison", "ranking", "trend_proxy"],
+            "nominal_category": ["comparison", "ranking", "composition"],
+            "continuous": ["distribution", "relationship", "marginal_effect"],
+            "time": ["trend", "seasonality", "anomaly"],
+        }.get(semantic_type, ["comparison"])
+        report_priority = "high" if role in {"target", "time"} else "medium" if unique_count is not None and unique_count <= 20 else "low"
+        fields.append(
+            {
+                "field_name": str(column),
+                "business_label": friendly_field_label(str(column)),
+                "role": role,
+                "semantic_type": semantic_type,
+                "report_priority": report_priority,
+                "allowed_chart_intents": allowed_chart_intents,
+                "preferred_audiences": list(REPORT_AUDIENCES),
+                "unique_count": unique_count,
+                "missing_ratio": missing_ratio,
+            }
+        )
+    return {
+        "version": 1,
+        "target_field": target,
+        "time_field": time_col,
+        "fields": fields,
+    }
+
+
+def build_raw_feature_lineage(df, target: str | None = None) -> dict[str, Any]:
+    features = []
+    for column in df.columns:
+        if target and column == target:
+            continue
+        features.append(
+            {
+                "feature_name": sanitize_feature_name(column),
+                "source_field": str(column),
+                "derivation": "raw_passthrough",
+                "category_value": None,
+                "is_model_internal": False,
+            }
+        )
+    return {
+        "version": 1,
+        "target_field": target,
+        "features": features,
+    }
+
+
+def encode_categoricals(df, columns: list[str] | None = None, dummy_na: bool = True, return_lineage: bool = False):
     ensure_modules(["pandas"], "categorical encoding")
     import pandas as pd  # type: ignore
 
     frame = df.copy()
     target_columns = columns or list(frame.select_dtypes(exclude=["number", "bool"]).columns)
     if not target_columns:
+        if return_lineage:
+            return frame, build_raw_feature_lineage(frame).get("features", [])
         return frame
     frame[target_columns] = frame[target_columns].fillna("__MISSING__").astype("string")
-    encoded = pd.get_dummies(frame, columns=target_columns, dummy_na=dummy_na)
-    encoded.columns = [str(col).replace("<", "_").replace(">", "_") for col in encoded.columns]
+    passthrough = frame.drop(columns=target_columns)
+    lineage: list[dict[str, Any]] = [
+        {
+            "feature_name": sanitize_feature_name(column),
+            "source_field": str(column),
+            "derivation": "raw_passthrough",
+            "category_value": None,
+            "is_model_internal": False,
+        }
+        for column in passthrough.columns
+    ]
+    encoded_parts = [passthrough]
+    for column in target_columns:
+        dummies = pd.get_dummies(frame[column], prefix=column, dummy_na=dummy_na)
+        encoded_parts.append(dummies)
+        prefix = f"{column}_"
+        for dummy_column in dummies.columns:
+            raw_name = str(dummy_column)
+            category_value = raw_name[len(prefix) :] if raw_name.startswith(prefix) else raw_name
+            lineage.append(
+                {
+                    "feature_name": sanitize_feature_name(raw_name),
+                    "source_field": str(column),
+                    "derivation": "one_hot",
+                    "category_value": category_value,
+                    "is_model_internal": False,
+                }
+            )
+    encoded = pd.concat(encoded_parts, axis=1)
+    encoded.columns = [sanitize_feature_name(col) for col in encoded.columns]
+    if return_lineage:
+        sanitized_map = {entry["feature_name"]: entry for entry in lineage}
+        ordered_lineage = [sanitized_map.get(str(column), {"feature_name": str(column), "source_field": str(column), "derivation": "unknown", "category_value": None, "is_model_internal": False}) for column in encoded.columns]
+        return encoded, ordered_lineage
     return encoded
 
 
@@ -106,9 +273,11 @@ def add_pca_features(df, columns: list[str], n_components: int = 2):
 def build_feature_plan(df, target: str | None = None, time_col: str | None = None) -> dict[str, Any]:
     numeric_columns = list(df.select_dtypes(include=["number", "bool"]).columns)
     categorical_columns = [col for col in df.columns if col not in numeric_columns]
+    semantic_schema = build_semantic_schema(df, target=target, time_col=time_col)
     plan: dict[str, Any] = {
         "numeric_columns": numeric_columns,
         "categorical_columns": categorical_columns,
+        "field_catalog": semantic_schema.get("fields", []),
         "recommendations": [],
         "available_advanced_features": {
             "calendar_features": bool(time_col and time_col in df.columns),

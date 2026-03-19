@@ -1,0 +1,481 @@
+{
+  "profiles": [
+    {
+      "column": "state",
+      "dominant_share": 0.09293262767387642,
+      "dtype": "str",
+      "flags": [],
+      "missing_rate": 0.0,
+      "top_values": [
+        {
+          "count": 5461,
+          "share": 0.09293262767387642,
+          "value": "NY"
+        },
+        {
+          "count": 3094,
+          "share": 0.052652179092285964,
+          "value": "WA"
+        },
+        {
+          "count": 1913,
+          "share": 0.03255449857903783,
+          "value": "MN"
+        },
+        {
+          "count": 1893,
+          "share": 0.032214148358661064,
+          "value": "MD"
+        },
+        {
+          "count": 1670,
+          "share": 0.0284192434014601,
+          "value": "WI"
+        }
+      ],
+      "unique_count": 53
+    },
+    {
+      "column": "sex",
+      "dominant_share": 0.5063220053434985,
+      "dtype": "str",
+      "flags": [],
+      "missing_rate": 0.0,
+      "top_values": [
+        {
+          "count": 29753,
+          "share": 0.5063220053434985,
+          "value": "female"
+        },
+        {
+          "count": 29010,
+          "share": 0.49367799465650153,
+          "value": "male"
+        }
+      ],
+      "unique_count": 2
+    },
+    {
+      "column": "age_group",
+      "dominant_share": 0.10639347888977758,
+      "dtype": "str",
+      "flags": [],
+      "missing_rate": 0.0,
+      "top_values": [
+        {
+          "count": 6252,
+          "share": 0.10639347888977758,
+          "value": "65-69"
+        },
+        {
+          "count": 5741,
+          "share": 0.09769753075915116,
+          "value": "70-74"
+        },
+        {
+          "count": 5591,
+          "share": 0.09514490410632541,
+          "value": "60-64"
+        },
+        {
+          "count": 5430,
+          "share": 0.09240508483229243,
+          "value": "80+"
+        },
+        {
+          "count": 4852,
+          "share": 0.08256896346340384,
+          "value": "75-79"
+        }
+      ],
+      "unique_count": 14
+    },
+    {
+      "column": "general_health",
+      "dominant_share": 0.34293688205163114,
+      "dtype": "str",
+      "flags": [],
+      "missing_rate": 0.0,
+      "top_values": [
+        {
+          "count": 20152,
+          "share": 0.34293688205163114,
+          "value": "good"
+        },
+        {
+          "count": 18623,
+          "share": 0.31691710770382725,
+          "value": "very_good"
+        },
+        {
+          "count": 8875,
+          "share": 0.15103041029219066,
+          "value": "fair"
+        },
+        {
+          "count": 8116,
+          "share": 0.13811411942889232,
+          "value": "excellent"
+        },
+        {
+          "count": 2860,
+          "share": 0.04867008151387778,
+          "value": "poor"
+        }
+      ],
+      "unique_count": 6
+    },
+    {
+      "column": "personal_doctor",
+      "dominant_share": 0.5293296802409679,
+      "dtype": "str",
+      "flags": [],
+      "missing_rate": 0.0,
+      "top_values": [
+        {
+          "count": 31105,
+          "share": 0.5293296802409679,
+          "value": "one_doctor"
+        },
+        {
+          "count": 20034,
+          "share": 0.3409288157514082,
+          "value": "multiple_doctors"
+        },
+        {
+          "count": 7082,
+          "share": 0.12051801303541344,
+          "value": "no_doctor"
+        },
+        {
+          "count": 542,
+          "share": 0.009223490972210405,
+          "value": "unknown"
+        }
+      ],
+      "unique_count": 4
+    },
+    {
+      "column": "medical_cost_barrier",
+      "dominant_share": 0.9023365042628865,
+      "dtype": "str",
+      "flags": [],
+      "missing_rate": 0.0,
+      "top_values": [
+        {
+          "count": 53024,
+          "share": 0.9023365042628865,
+          "value": "no"
+        },
+        {
+          "count": 5555,
+          "share": 0.09453227370964723,
+          "value": "yes"
+        },
+        {
+          "count": 184,
+          "share": 0.0031312220274662627,
+          "value": "unknown"
+        }
+      ],
+      "unique_count": 3
+    },
+    {
+      "column": "recent_checkup",
+      "dominant_share": 0.8085359835270494,
+      "dtype": "str",
+      "flags": [],
+      "missing_rate": 0.0,
+      "top_values": [
+        {
+          "count": 47512,
+          "share": 0.8085359835270494,
+          "value": "within_past_year"
+        },
+        {
+          "count": 5021,
+          "share": 0.08544492282558754,
+          "value": "within_2_years"
+        },
+        {
+          "count": 2821,
+          "share": 0.04800639858414308,
+          "value": "within_5_years"
+        },
+        {
+          "count": 2441,
+          "share": 0.0415397443969845,
+          "value": "5plus_years"
+        },
+        {
+          "count": 633,
+          "share": 0.010772084474924698,
+          "value": "unknown"
+        }
+      ],
+      "unique_count": 6
+    },
+    {
+      "column": "exercise_past_30d",
+      "dominant_share": 0.7670472916631214,
+      "dtype": "str",
+      "flags": [],
+      "missing_rate": 0.0,
+      "top_values": [
+        {
+          "count": 45074,
+          "share": 0.7670472916631214,
+          "value": "yes"
+        },
+        {
+          "count": 13564,
+          "share": 0.23082551945952384,
+          "value": "no"
+        },
+        {
+          "count": 125,
+          "share": 0.002127188877354798,
+          "value": "unknown"
+        }
+      ],
+      "unique_count": 3
+    },
+    {
+      "column": "leisure_time_activity",
+      "dominant_share": 0.7670472916631214,
+      "dtype": "str",
+      "flags": [],
+      "missing_rate": 0.0,
+      "top_values": [
+        {
+          "count": 45074,
+          "share": 0.7670472916631214,
+          "value": "yes"
+        },
+        {
+          "count": 13564,
+          "share": 0.23082551945952384,
+          "value": "no"
+        },
+        {
+          "count": 125,
+          "share": 0.002127188877354798,
+          "value": "unknown"
+        }
+      ],
+      "unique_count": 3
+    },
+    {
+      "column": "ever_smoked_100",
+      "dominant_share": 0.5763320456749996,
+      "dtype": "str",
+      "flags": [],
+      "missing_rate": 0.0,
+      "top_values": [
+        {
+          "count": 33867,
+          "share": 0.5763320456749996,
+          "value": "no"
+        },
+        {
+          "count": 22767,
+          "share": 0.3874376733658935,
+          "value": "yes"
+        },
+        {
+          "count": 2129,
+          "share": 0.03623028095910692,
+          "value": "unknown"
+        }
+      ],
+      "unique_count": 3
+    },
+    {
+      "column": "income_bracket",
+      "dominant_share": 0.15125163793543556,
+      "dtype": "str",
+      "flags": [],
+      "missing_rate": 0.0,
+      "top_values": [
+        {
+          "count": 8888,
+          "share": 0.15125163793543556,
+          "value": "unknown"
+        },
+        {
+          "count": 8264,
+          "share": 0.14063271105968042,
+          "value": "cat_07"
+        },
+        {
+          "count": 7498,
+          "share": 0.1275972976192502,
+          "value": "cat_09"
+        },
+        {
+          "count": 6937,
+          "share": 0.11805047393768188,
+          "value": "cat_08"
+        },
+        {
+          "count": 6799,
+          "share": 0.11570205741708217,
+          "value": "cat_06"
+        }
+      ],
+      "unique_count": 12
+    },
+    {
+      "column": "education_level",
+      "dominant_share": 0.41286183482803807,
+      "dtype": "str",
+      "flags": [],
+      "missing_rate": 0.0,
+      "top_values": [
+        {
+          "count": 24261,
+          "share": 0.41286183482803807,
+          "value": "college_grad"
+        },
+        {
+          "count": 15901,
+          "share": 0.27059544271054914,
+          "value": "some_college"
+        },
+        {
+          "count": 15094,
+          "share": 0.2568623113183466,
+          "value": "high_school"
+        },
+        {
+          "count": 2182,
+          "share": 0.03713220904310535,
+          "value": "grades_9_11"
+        },
+        {
+          "count": 1085,
+          "share": 0.018463999455439646,
+          "value": "grades_1_8"
+        }
+      ],
+      "unique_count": 7
+    },
+    {
+      "column": "diabetes_status",
+      "dominant_share": 0.8193931555570683,
+      "dtype": "str",
+      "flags": [],
+      "missing_rate": 0.0,
+      "top_values": [
+        {
+          "count": 48150,
+          "share": 0.8193931555570683,
+          "value": "no"
+        },
+        {
+          "count": 8622,
+          "share": 0.14672498000442455,
+          "value": "yes"
+        },
+        {
+          "count": 1445,
+          "share": 0.024590303422221467,
+          "value": "prediabetes"
+        },
+        {
+          "count": 430,
+          "share": 0.007317529738100506,
+          "value": "pregnancy_only"
+        },
+        {
+          "count": 116,
+          "share": 0.001974031278185253,
+          "value": "unknown"
+        }
+      ],
+      "unique_count": 5
+    },
+    {
+      "column": "heart_disease",
+      "dominant_share": 0.891751612409169,
+      "dtype": "str",
+      "flags": [],
+      "missing_rate": 0.0,
+      "top_values": [
+        {
+          "count": 52402,
+          "share": 0.891751612409169,
+          "value": "no"
+        },
+        {
+          "count": 5686,
+          "share": 0.09676156765311505,
+          "value": "yes"
+        },
+        {
+          "count": 675,
+          "share": 0.011486819937715909,
+          "value": "unknown"
+        }
+      ],
+      "unique_count": 3
+    },
+    {
+      "column": "asthma_status",
+      "dominant_share": 0.8350322481833807,
+      "dtype": "str",
+      "flags": [],
+      "missing_rate": 0.0,
+      "top_values": [
+        {
+          "count": 49069,
+          "share": 0.8350322481833807,
+          "value": "no"
+        },
+        {
+          "count": 9459,
+          "share": 0.16096863672719228,
+          "value": "yes"
+        },
+        {
+          "count": 235,
+          "share": 0.003999115089427021,
+          "value": "unknown"
+        }
+      ],
+      "unique_count": 3
+    },
+    {
+      "column": "obese",
+      "dominant_share": 0.6562462774194646,
+      "dtype": "int64",
+      "flags": [
+        "target"
+      ],
+      "missing_rate": 0.0,
+      "top_values": [
+        {
+          "count": 38563,
+          "share": 0.6562462774194646,
+          "value": "0"
+        },
+        {
+          "count": 20200,
+          "share": 0.3437537225805354,
+          "value": "1"
+        }
+      ],
+      "unique_count": 2
+    }
+  ],
+  "row_count": 58763,
+  "summary": {
+    "constant_features": [],
+    "dominant_category_features": [],
+    "flag_counts": {
+      "target": 1
+    },
+    "high_cardinality_features": [],
+    "high_missingness_features": []
+  }
+}

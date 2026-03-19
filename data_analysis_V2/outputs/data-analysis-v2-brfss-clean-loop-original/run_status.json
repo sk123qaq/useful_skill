@@ -1,0 +1,7 @@
+{
+  "required_decision_file": "data_processing_decision.json",
+  "route": "predictive",
+  "stage": "awaiting_agent_review_after_scout",
+  "status": "completed",
+  "updated_at": "2026-03-19T04:37:55+00:00"
+}

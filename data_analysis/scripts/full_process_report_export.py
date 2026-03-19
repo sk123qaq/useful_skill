@@ -13,7 +13,11 @@ KNOWN_JSON_ARTIFACTS = {
     "environment": "environment.json",
     "read_plan": "read_plan.json",
     "sampling_report": "sampling_report.json",
+    "semantic_schema": "semantic_schema.json",
+    "feature_lineage": "feature_lineage.json",
     "chart_plan": "chart_plan.json",
+    "chart_candidates": "chart_candidates.json",
+    "report_chart_decision": "report_chart_decision.json",
     "chart_review": "chart_review.json",
     "chart_vision_review": "chart_vision_review.json",
     "cleaning_report": "cleaning_report.json",
@@ -248,6 +252,8 @@ def _normalize_chart_review(review: dict[str, Any] | None) -> tuple[dict[str, di
         return {}, None
     rows = review.get("charts", [])
     if not isinstance(rows, list):
+        rows = review.get("selected_charts", [])
+    if not isinstance(rows, list):
         rows = []
     mapping: dict[str, dict[str, Any]] = {}
     for row in rows:
@@ -261,6 +267,64 @@ def _normalize_chart_review(review: dict[str, Any] | None) -> tuple[dict[str, di
             mapping[f"title::{title}"] = row
     overall = review.get("overall_summary")
     return mapping, str(overall) if overall else None
+
+
+def _chart_candidate_rows(context: dict[str, Any]) -> list[dict[str, Any]]:
+    payload = context.get("chart_candidates") or {}
+    rows = payload.get("candidates") if isinstance(payload, dict) else None
+    if not isinstance(rows, list):
+        return []
+    return [row for row in rows if isinstance(row, dict)]
+
+
+def _selected_body_chart_rows(context: dict[str, Any]) -> list[dict[str, Any]]:
+    payload = context.get("report_chart_decision") or {}
+    rows = payload.get("selected_charts") if isinstance(payload, dict) else None
+    if not isinstance(rows, list):
+        return []
+    return [row for row in rows if isinstance(row, dict)]
+
+
+def _chart_governance_summary(context: dict[str, Any]) -> dict[str, Any]:
+    candidates = _chart_candidate_rows(context)
+    selected = _selected_body_chart_rows(context)
+    candidate_by_file = {str(item.get("file")): item for item in candidates if item.get("file")}
+    eligible = [item for item in candidates if bool(item.get("allow_in_formal_body")) and not bool(item.get("diagnostic_only"))]
+    diagnostic = [item for item in candidates if bool(item.get("diagnostic_only"))]
+    report_chart_decision = context.get("report_chart_decision") or {}
+    chart_review = context.get("chart_review") or {}
+    audience = (
+        report_chart_decision.get("report_audience")
+        or (context.get("chart_candidates") or {}).get("report_audience")
+        or "management"
+    )
+    if selected:
+        status = "正式正文图已决策" if str(report_chart_decision.get("status") or "").strip().lower() == "final" else "已生成正文图草稿决策"
+    elif candidates:
+        status = "已生成候选池，待回填正文图决策"
+    else:
+        status = "当前 run 未生成正文图治理元数据"
+    notes: list[str] = []
+    if candidates:
+        notes.append("正式报告正文图应从 chart_candidates 约束的候选池中选择，而不是从任意 PNG 任取。")
+        notes.append("diagnostic_only=true 或 allow_in_formal_body=false 的图默认不进入正文。")
+    if str(chart_review.get("status") or "").strip().lower() == "final":
+        notes.append("chart_review 已完成逐图自然语言复核，可直接支撑正式报告定稿。")
+    elif selected:
+        notes.append("当前已有正文图选择结果，但图表自然语言解读仍可能处于草稿阶段。")
+    selected_files = [str(item.get("file")) for item in selected if item.get("file")]
+    return {
+        "status": status,
+        "report_audience": str(audience),
+        "candidate_count": len(candidates),
+        "eligible_count": len(eligible),
+        "diagnostic_count": len(diagnostic),
+        "selected_count": len(selected),
+        "selected_files": selected_files,
+        "candidate_by_file": candidate_by_file,
+        "selected_files_set": set(selected_files),
+        "notes": notes,
+    }
 
 
 def _split_sentences(text: str | None) -> list[str]:
@@ -324,6 +388,27 @@ def _default_read_method(title: str, file_name: str | None) -> str:
     if "heatmap" in text or "热力" in text:
         return "先按行看群组轮廓，再按列看关键指标的高低分化。"
     return "先看整体结构，再聚焦差异最大的对象和区间。"
+
+
+def _diagnostic_chart_reason(candidate_meta: dict[str, Any] | None, meaning: str, read_tip: str) -> str:
+    reasons: list[str] = []
+    if candidate_meta:
+        if bool(candidate_meta.get("diagnostic_only")):
+            reasons.append("该图被治理层标记为诊断图，默认用于过程审阅或附录，不直接进入正式报告正文。")
+        elif not bool(candidate_meta.get("allow_in_formal_body", True)):
+            reasons.append("该图当前不满足正式报告正文准入条件，因此保留在过程报告中供复核。")
+        audience_fit = candidate_meta.get("audience_fit") or {}
+        if audience_fit.get("management") == "low":
+            reasons.append("按当前 management 受众口径，它更适合分析复核而不是管理层正文。")
+    normalized_meaning = meaning.strip()
+    if normalized_meaning.startswith("帮助理解") and "边际影响" in normalized_meaning:
+        focus = normalized_meaning.removeprefix("帮助理解").strip(" 。")
+        reasons.append(f"保留这张图是为了核对 {focus} 是否稳定，而不是直接把它当成正式结论。")
+    elif normalized_meaning:
+        reasons.append(_merge_sentences(normalized_meaning, limit=1))
+    elif read_tip:
+        reasons.append(f"保留这张图主要用于过程复核：{_merge_sentences(read_tip, limit=1)}")
+    return " ".join(part for part in reasons if part).strip() or "该图保留用于过程审阅，帮助确认模型或分析路径中的局部信号。"
 
 
 def _derive_report_brain(context: dict[str, Any]) -> dict[str, Any]:
@@ -452,7 +537,8 @@ def _derive_report_brain(context: dict[str, Any]) -> dict[str, Any]:
             "对小样本簇做稳定性复核，确认是否需要调整簇数或拆分策略。",
         ]
 
-    review_source = context.get("chart_review") or context.get("chart_vision_review")
+    governance = _chart_governance_summary(context)
+    review_source = context.get("chart_review") or context.get("report_chart_decision") or context.get("chart_vision_review")
     review_map, overall_chart_summary = _normalize_chart_review(review_source)
 
     chart_cards = []
@@ -470,6 +556,7 @@ def _derive_report_brain(context: dict[str, Any]) -> dict[str, Any]:
             review_file = review_item.get("file")
             if review_file:
                 file_name = str(review_file)
+        candidate_meta = governance["candidate_by_file"].get(str(file_name)) if file_name else None
 
         meaning = str(item.get("meaning") or "").strip()
         read_tip = str(item.get("how_to_read") or "").strip()
@@ -481,6 +568,17 @@ def _derive_report_brain(context: dict[str, Any]) -> dict[str, Any]:
             interpretation = review_item.get("interpretation") or interpretation
             implication = review_item.get("implication") or implication
             caption_note = review_item.get("caption_note") or ""
+
+        review_status = str((context.get("chart_review") or {}).get("status") or "").strip().lower()
+        if review_status != "final":
+            review_status = str((context.get("report_chart_decision") or {}).get("status") or "").strip().lower()
+        has_final_review = bool(
+            isinstance(review_item, dict)
+            and review_status == "final"
+            and review_item.get("interpretation")
+            and review_item.get("implication")
+        )
+        is_body_selected = bool(file_name and file_name in governance["selected_files_set"])
 
         interpretation_text = _strip_chart_template_openers(
             _dedupe_sentences_text(str(interpretation), limit=5) or str(interpretation)
@@ -503,11 +601,18 @@ def _derive_report_brain(context: dict[str, Any]) -> dict[str, Any]:
             {
                 "file": file_name,
                 "title": title,
-                "interpretation": str(interpretation_text),
-                "evidence_point": str(evidence_point),
-                "read_method": str(read_method),
-                "implication": str(implication_text),
+                "interpretation": str(interpretation_text) if has_final_review and is_body_selected else "",
+                "evidence_point": str(evidence_point) if has_final_review and is_body_selected else "",
+                "read_method": str(read_method) if has_final_review and is_body_selected else "",
+                "implication": str(implication_text) if has_final_review and is_body_selected else "",
                 "caption_note": str(caption_note),
+                "body_selected": is_body_selected,
+                "has_final_review": has_final_review,
+                "card_kind": "reviewed_body" if has_final_review and is_body_selected else "diagnostic_review",
+                "process_note": _diagnostic_chart_reason(candidate_meta, meaning=meaning, read_tip=read_tip),
+                "section_role": (candidate_meta or {}).get("section_role"),
+                "diagnostic_only": bool((candidate_meta or {}).get("diagnostic_only")),
+                "allow_in_formal_body": bool((candidate_meta or {}).get("allow_in_formal_body", True)),
             }
         )
 
@@ -539,6 +644,7 @@ def _derive_report_brain(context: dict[str, Any]) -> dict[str, Any]:
         "confidence": confidence,
         "confidence_score": round(decision_score, 1),
         "evidence_map": evidence_map,
+        "chart_governance": governance,
         "chart_cards": chart_cards,
         "overall_chart_summary": overall_chart_summary,
         "quality_checks": quality_checks,
@@ -692,8 +798,35 @@ def _section_method_evidence(context: dict[str, Any], brain: dict[str, Any]) -> 
     """
 
 
+def _section_chart_governance(brain: dict[str, Any]) -> str:
+    governance = brain.get("chart_governance") or {}
+    rows = [
+        ("治理状态", governance.get("status", "N/A")),
+        ("报告受众", governance.get("report_audience", "N/A")),
+        ("候选图数量", governance.get("candidate_count", 0)),
+        ("可进正文候选", governance.get("eligible_count", 0)),
+        ("诊断/附录倾向", governance.get("diagnostic_count", 0)),
+        ("已选正文图", governance.get("selected_count", 0)),
+    ]
+    selected_files = governance.get("selected_files") or []
+    selected_html = "".join(f"<li>{_escape(item)}</li>" for item in selected_files)
+    notes_html = "".join(f"<li>{_escape(item)}</li>" for item in governance.get("notes", []))
+    return f"""
+    <section class="panel">
+      <h2>正式报告正文图治理状态</h2>
+      {_render_kv_table(rows)}
+      <h3>当前入选正文的图</h3>
+      <ul class="bullet-list">{selected_html or '<li>当前尚未回填正文图决策，formal report 会使用治理层默认草稿选择。</li>'}</ul>
+      <h3>治理约束说明</h3>
+      <ul class="bullet-list">{notes_html or '<li>当前未检测到 chart_candidates / report_chart_decision artifact。</li>'}</ul>
+      <p class="hint">说明：过程报告仍保留全量 chart plan / PNG 的审计视角；正式报告正文图则受治理层约束，不应与这里的全量图审阅视角混淆。</p>
+    </section>
+    """
+
+
 def _section_charts(brain: dict[str, Any], png_files: list[str]) -> str:
-    cards = []
+    reviewed_cards: list[str] = []
+    diagnostic_cards: list[str] = []
     available_png = set(png_files)
     for idx, card in enumerate(brain["chart_cards"], start=1):
         file_name = card.get("file")
@@ -705,23 +838,34 @@ def _section_charts(brain: dict[str, Any], png_files: list[str]) -> str:
         if card.get("caption_note"):
             caption = f"<p class=\"hint\"><strong>注释：</strong>{_escape(card['caption_note'])}</p>"
 
-        evidence_html = ""
-        if card.get("evidence_point"):
-            evidence_html = f"<p><strong>证据点：</strong>{_escape(card['evidence_point'])}</p>"
+        if card.get("card_kind") == "reviewed_body":
+            evidence_html = f"<p><strong>证据点：</strong>{_escape(card['evidence_point'])}</p>" if card.get("evidence_point") else ""
+            read_method_html = f"<p><strong>读图方法：</strong>{_escape(card['read_method'])}</p>" if card.get("read_method") else ""
+            reviewed_cards.append(
+                f"""
+                <article class="chart-card">
+                  <h3>{idx}. {_escape(card['title'])}</h3>
+                  <p class="hint"><strong>正文状态：</strong>已选入正式报告正文；角色={_escape(card.get('section_role') or '未标注')}；已完成 final 读图回填。</p>
+                  {image_html}
+                  <p><strong>图表解读：</strong>{_escape(card['interpretation'])}</p>
+                  {evidence_html}
+                  {read_method_html}
+                  <p><strong>业务含义：</strong>{_escape(card['implication'])}</p>
+                  {caption}
+                </article>
+                """
+            )
+            continue
 
-        read_method_html = ""
-        if card.get("read_method"):
-            read_method_html = f"<p><strong>读图方法：</strong>{_escape(card['read_method'])}</p>"
-
-        cards.append(
+        governance_flag = "诊断/附录倾向" if card.get("diagnostic_only") else "未入正文"
+        diagnostic_cards.append(
             f"""
-            <article class="chart-card">
+            <article class="chart-card diagnostic-card">
               <h3>{idx}. {_escape(card['title'])}</h3>
+              <p class="hint"><strong>过程角色：</strong>{_escape(governance_flag)}；角色={_escape(card.get('section_role') or '未标注')}；当前未做 agent 正式读图回填。</p>
               {image_html}
-              <p><strong>图表解读：</strong>{_escape(card['interpretation'])}</p>
-              {evidence_html}
-              {read_method_html}
-              <p><strong>业务含义：</strong>{_escape(card['implication'])}</p>
+              <p><strong>保留原因：</strong>{_escape(card.get('process_note') or '该图仅保留用于过程审阅。')}</p>
+              <p class="hint">说明：这里不再生成“图表解读 / 证据点 / 读图方法 / 业务含义”式模板内容，避免把诊断图误写成正式结论。</p>
               {caption}
             </article>
             """
@@ -730,8 +874,12 @@ def _section_charts(brain: dict[str, Any], png_files: list[str]) -> str:
     return f"""
     <section class="panel">
       <h2>图表深度解读（基于图像复核）</h2>
-      <div class="chart-grid">{''.join(cards) or '<p>暂无图表解读内容。</p>'}</div>
-      <h3>图表总体解读</h3>
+      <p class="hint">本节保留过程审阅视角，但明确区分“已进入正式报告正文并完成 final 解读的图”和“仅供过程复核的诊断图”；正式报告正文图的最终去留仍以 `report_chart_decision.json` 为准。</p>
+      <h3>已完成正式读图回填的正文图</h3>
+      <div class="chart-grid">{''.join(reviewed_cards) or '<p>当前没有已完成 final 回填的正文图。</p>'}</div>
+      <h3>仅供过程审阅的诊断图</h3>
+      <div class="chart-grid">{''.join(diagnostic_cards) or '<p>当前没有额外的诊断图需要展示。</p>'}</div>
+      <h3>正文图总体解读</h3>
       <p>{_escape(brain['overall_chart_summary'])}</p>
     </section>
     """
@@ -749,10 +897,20 @@ def _section_risks(brain: dict[str, Any]) -> str:
 
 
 def _build_meta_payload(context: dict[str, Any], brain: dict[str, Any]) -> dict[str, Any]:
+    governance = brain.get("chart_governance") or {}
     return {
         "generated_at": datetime.now().isoformat(timespec="seconds"),
         "run_dir": context.get("run_dir"),
         "artifact_status": context.get("artifact_status", {}),
+        "chart_governance": {
+            "status": governance.get("status"),
+            "report_audience": governance.get("report_audience"),
+            "candidate_count": governance.get("candidate_count"),
+            "eligible_count": governance.get("eligible_count"),
+            "diagnostic_count": governance.get("diagnostic_count"),
+            "selected_count": governance.get("selected_count"),
+            "selected_files": governance.get("selected_files", []),
+        },
         "quality_checks": [
             {"name": name, "passed": bool(passed)} for name, passed in brain.get("quality_checks", [])
         ],
@@ -779,6 +937,7 @@ def _build_html(context: dict[str, Any], title: str | None = None) -> tuple[str,
         _section_suggestion_directions(brain),
         _section_data_quality(context, brain),
         _section_method_evidence(context, brain),
+        _section_chart_governance(brain),
         _section_charts(brain, context.get("png_files", [])),
         _section_risks(brain),
     ]

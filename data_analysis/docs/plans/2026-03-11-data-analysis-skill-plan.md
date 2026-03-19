@@ -218,6 +218,16 @@ Support:
 - ARPPU / ARPU
 - revenue concentration hints
 
+---
+
+## Reporting TODO
+
+- 进入“按任务模块细化 audience-first 候选图策略”这一层，而不是继续修主干框架。
+- 正式报告中的模型设计与模型结果应形成独立章节，解释为什么这样设计模型、结果如何、模型是否可用，以及后续应做什么。
+- `report_process.html` 的图表区需要进一步治理：
+  - 不合适的二元 PDP 视觉形式不能继续默认用折线图。
+  - 过程报告中的图表文字不能停留在模板化占位或脚本默认说明，应该和治理层、图表语义及 agent 回填机制保持一致。
+
 **Step 3: Document experiment design rules**
 
 Cover:
@@ -238,6 +248,15 @@ Use it only for:
 - context gathering
 - metric definition verification
 - external benchmark discovery
+
+---
+
+### Open TODOs
+
+- Redesign chart selection around semantic business fields and report intent instead of relying on task-level defaults plus rendered file names.
+- Revisit `_choose_pdp_features()` and the current "top permutation-importance features -> up to 3 PDP charts" rule. The next iteration should distinguish analysis-only diagnostics from report-ready figures, and avoid defaulting to one-hot derived binary features as primary report charts when a higher-level raw field view would communicate better.
+- Introduce a more stable report-chart policy: use importance only to shortlist candidate raw fields, then choose chart types by field semantics and report intent; keep limited diversity across sessions via agent-authored chart recommendations, but enforce hard constraints on readability, provenance, and suitability so chart choices stay defensible.
+- Adopt an audience-first policy for formal report body charts: allow controlled session-to-session variation only within audience-appropriate chart candidates, and make chart inclusion depend on reader needs (management, business operators, analysts) rather than fixed chart-count quotas.
 - missing domain context
 
 **Step 2: Normalize source capture**
