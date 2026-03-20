@@ -1,0 +1,115 @@
+{
+  "task": "classification",
+  "model_name": "logistic_regression",
+  "native_feature_importance": [
+    {
+      "feature": "age_group_80+",
+      "importance": 0.9285132345424444
+    },
+    {
+      "feature": "general_health_excellent",
+      "importance": 0.8359837238914217
+    },
+    {
+      "feature": "age_group_18-24",
+      "importance": 0.46933752157384856
+    },
+    {
+      "feature": "state_HI",
+      "importance": 0.42161462758650625
+    },
+    {
+      "feature": "diabetes_status_no",
+      "importance": 0.409476434861752
+    },
+    {
+      "feature": "age_group_45-49",
+      "importance": 0.40408294214848406
+    },
+    {
+      "feature": "age_group_75-79",
+      "importance": 0.3915838333221936
+    },
+    {
+      "feature": "age_group_50-54",
+      "importance": 0.3848355360806352
+    },
+    {
+      "feature": "general_health_fair",
+      "importance": 0.37610859299519134
+    },
+    {
+      "feature": "age_group_40-44",
+      "importance": 0.36975234384501143
+    }
+  ],
+  "permutation_importance": [
+    {
+      "feature": "diabetes_status_no",
+      "importance_mean": 0.011989171843533718,
+      "importance_std": 0.0007374723155896958
+    },
+    {
+      "feature": "general_health_excellent",
+      "importance_mean": 0.010026394418386686,
+      "importance_std": 0.0003786002674725313
+    },
+    {
+      "feature": "age_group_80+",
+      "importance_mean": 0.007984434557507313,
+      "importance_std": 0.0006253121440468834
+    },
+    {
+      "feature": "general_health_fair",
+      "importance_mean": 0.007039374314228686,
+      "importance_std": 0.00039619934916229816
+    },
+    {
+      "feature": "diabetes_status_yes",
+      "importance_mean": 0.006880094825955985,
+      "importance_std": 0.0004456210063046484
+    },
+    {
+      "feature": "general_health_very_good",
+      "importance_mean": 0.005143387903675844,
+      "importance_std": 0.0006100153517625044
+    },
+    {
+      "feature": "general_health_good",
+      "importance_mean": 0.004694610400869215,
+      "importance_std": 0.0007255283357068933
+    },
+    {
+      "feature": "age_group_50-54",
+      "importance_mean": 0.002604881312113505,
+      "importance_std": 0.00023352150389029328
+    },
+    {
+      "feature": "age_group_18-24",
+      "importance_mean": 0.002531627839198791,
+      "importance_std": 0.0002154859787170695
+    },
+    {
+      "feature": "asthma_status_no",
+      "importance_mean": 0.0024784858398895658,
+      "importance_std": 0.0004532102523720251
+    }
+  ],
+  "partial_dependence_features": [
+    "diabetes_status_no",
+    "general_health_excellent",
+    "age_group_80+"
+  ],
+  "partial_dependence_artifacts": [
+    "data_analysis_pro/outputs/obesity_analysis/explainability/explainability-20260319-230425/pdp_diabetes_status_no.png",
+    "data_analysis_pro/outputs/obesity_analysis/explainability/explainability-20260319-230425/pdp_general_health_excellent.png",
+    "data_analysis_pro/outputs/obesity_analysis/explainability/explainability-20260319-230425/pdp_age_group_80+.png"
+  ],
+  "shap": {
+    "available": false,
+    "error": "Model type not yet supported by TreeExplainer: <class 'sklearn.linear_model._logistic.LogisticRegression'>"
+  },
+  "train_rows": 331706,
+  "test_rows": 82927,
+  "n_features": 156
+}

@@ -1,8 +1,0 @@
-{
-  "event_path": "/Users/sk/program/useful_skill/data_analysis_V2/outputs/data-analysis-v2-brfss-clean-loop-cleaned-v2/tuning_pass_001/optimize_runner_events.jsonl",
-  "heartbeat_path": "/Users/sk/program/useful_skill/data_analysis_V2/outputs/data-analysis-v2-brfss-clean-loop-cleaned-v2/tuning_pass_001/optimize_runner_heartbeat.jsonl",
-  "job_name": "optimize_runner",
-  "last_heartbeat_at": "2026-03-19T04:51:48+00:00",
-  "status": "completed",
-  "updated_at": "2026-03-19T04:51:48+00:00"
-}

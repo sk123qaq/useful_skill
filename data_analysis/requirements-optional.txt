@@ -1,9 +1,0 @@
-plotly
-streamlit
-shap
-xgboost
-lightgbm
-prophet
-psycopg-binary
-pymysql
-pyodbc

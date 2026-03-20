@@ -1,6 +1,0 @@
-interface:
-  display_name: "Data Analysis V2"
-  short_description: "Agent-first gated tabular analysis"
-  default_prompt: "Use $data-analysis-v2 to run a baseline-first, evidence-gated analysis on this tabular dataset."
-policy:
-  allow_implicit_invocation: true
