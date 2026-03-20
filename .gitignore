@@ -19,6 +19,7 @@ __pycache__/
 .venv/
 venv/
 env/
+.venv-data-analysis/
 
 # Secrets
 .env
@@ -30,7 +31,7 @@ env/
 *.tmp
 
 # Data-analysis local datasets and generated outputs
-data_analysis/assets/*
-!data_analysis/assets/.gitkeep
-data_analysis/outputs/*
-!data_analysis/outputs/.gitkeep
+output/
+outputs/
+.pytest_cache/
+LOCAL_GITHUB_UPLOAD_GUIDE.md
