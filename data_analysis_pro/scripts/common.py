@@ -176,6 +176,7 @@ def get_availability_report() -> dict[str, Any]:
         "modules": modules,
         "tools": {name: command_available(name) for name in EXTERNAL_TOOLS},
         "mpl_config_dir": os.environ.get("MPLCONFIGDIR"),
+        "fonts": configure_matplotlib_fonts(),
         "timestamp": now_utc_iso(),
     }
 

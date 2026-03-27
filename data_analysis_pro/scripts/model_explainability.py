@@ -136,7 +136,7 @@ def _save_binary_partial_dependence_plot(model, X_numeric: pd.DataFrame, feature
     return str(path)
 
 
-def shap_feature_importance(model, X_sample, output_dir: Path, top_n: int = 15) -> dict[str, Any]:
+def compute_shap_importance(model, X_sample, output_dir: Path, top_n: int = 15) -> dict[str, Any]:
     try:
         import matplotlib.pyplot as plt  # type: ignore
         import shap  # type: ignore
@@ -144,17 +144,35 @@ def shap_feature_importance(model, X_sample, output_dir: Path, top_n: int = 15) 
         _configure_chinese_font()
         X_numeric = _coerce_numeric_matrix(X_sample)
         display_feature_names = [friendly_chart_feature_label(column) for column in X_numeric.columns]
-        explainer = shap.TreeExplainer(model)
-        values = explainer.shap_values(X_numeric)
+        
+        # Use TreeExplainer for tree models, KernelExplainer for others if needed
+        # For simplicity in this script, focusing on TreeExplainer or fallback
+        try:
+            explainer = shap.TreeExplainer(model)
+            values = explainer.shap_values(X_numeric)
+        except Exception:
+            # Fallback for non-tree models or errors
+            explainer = shap.Explainer(model, X_numeric)
+            values = explainer(X_numeric).values
+            
         if isinstance(values, list):
-            values = np.stack([np.asarray(item, dtype=float) for item in values], axis=-1)
+            # For classification, values is a list of arrays (one per class)
+            # Use the positive class if binary, or mean of absolute if multiclass
+            if len(values) == 2:
+                values = np.asarray(values[1], dtype=float)
+            else:
+                values = np.mean(np.abs(np.stack([np.asarray(item, dtype=float) for item in values], axis=-1)), axis=2)
         else:
             values = np.asarray(values, dtype=float)
+            
         if values.ndim == 3:
+            # Multiclass SHAP values
             values = np.mean(np.abs(values), axis=2)
+            
         mean_abs = np.mean(np.abs(values), axis=0)
         ranking = sorted(zip(X_numeric.columns.tolist(), mean_abs.tolist()), key=lambda item: item[1], reverse=True)
 
+        # Plot
         shap.summary_plot(
             values,
             X_numeric.to_numpy(),
@@ -164,7 +182,7 @@ def shap_feature_importance(model, X_sample, output_dir: Path, top_n: int = 15) 
             show=False,
         )
         ax = plt.gca()
-        ax.set_title("SHAP 特征重要性", fontsize=13)
+        ax.set_title("SHAP 特征重要性 (全局)", fontsize=13)
         ax.set_xlabel("平均 |SHAP| 影响强度")
         bar_path = output_dir / "shap_bar.png"
         plt.tight_layout()
@@ -173,11 +191,47 @@ def shap_feature_importance(model, X_sample, output_dir: Path, top_n: int = 15) 
 
         return {
             "available": True,
-            "top_features": [{"feature": feature, "mean_abs_shap": float(value)} for feature, value in ranking[:top_n]],
+            "top_features": [{"feature": feature, "importance": float(value)} for feature, value in ranking[:top_n]],
             "artifact": str(bar_path),
         }
     except Exception as exc:
         return {"available": False, "error": str(exc)}
+
+
+def calculate_trend_analysis(model, X: pd.DataFrame, top_features: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Calculate correlation between features and predictions to identify trends."""
+    X_numeric = _coerce_numeric_matrix(X)
+    try:
+        preds = model.predict(X_numeric)
+    except Exception:
+        # Fallback if predict fails
+        return []
+        
+    results = []
+    for item in top_features:
+        feature = item["feature"]
+        if feature not in X_numeric.columns:
+            continue
+        
+        series = X_numeric[feature]
+        if series.nunique() <= 1:
+            results.append({"feature": feature, "trend": "constant", "correlation": 0.0})
+            continue
+            
+        corr = series.corr(pd.Series(preds))
+        if pd.isna(corr):
+            trend = "unknown"
+        elif abs(corr) > 0.15:
+            trend = "positive" if corr > 0 else "negative"
+        else:
+            trend = "nonlinear"
+            
+        results.append({
+            "feature": feature,
+            "trend": trend,
+            "correlation": float(corr) if not pd.isna(corr) else 0.0
+        })
+    return results
 
 
 def save_partial_dependence_plots(model, X_train, features: list[str], output_dir: Path) -> list[str]:
@@ -220,35 +274,58 @@ def explain_supervised_model(
     X_test = fitted["X_test"]
     y_test = fitted["y_test"]
 
+    # Calculate various importance metrics
     native = native_feature_importance(model, fitted["feature_names"], top_n=top_n)
     permutation = permutation_feature_importance(model, X_test, y_test, task=task, top_n=top_n)
+    
+    # Compute SHAP
+    shap_report = compute_shap_importance(model, X_test.head(min(len(X_test), 200)), output_dir, top_n=top_n)
+    
+    # Decide top features for trend analysis and PDP
+    if shap_report.get("available"):
+        primary_importance_type = "shap"
+        top_features = shap_report["top_features"]
+    else:
+        primary_importance_type = "permutation"
+        top_features = [
+            {"feature": item["feature"], "importance": item["importance_mean"]} 
+            for item in permutation
+        ]
+
+    # Trend Analysis
+    trends = calculate_trend_analysis(model, X_test, top_features[:top_n])
+    
+    # Partial Dependence Plots
     prioritized_features = _choose_pdp_features(
         X_train,
-        [item["feature"] for item in permutation] or [item["feature"] for item in native],
+        [item["feature"] for item in top_features],
         limit=3,
     )
 
     pdp_artifacts: list[str] = []
     if prioritized_features:
         try:
-            pdp_artifacts = save_partial_dependence_plots(model, X_train, prioritized_features[:3], output_dir)
+            pdp_artifacts = save_partial_dependence_plots(model, X_train, prioritized_features, output_dir)
         except Exception:
             pdp_artifacts = []
 
-    shap_report = shap_feature_importance(model, X_test.head(min(len(X_test), 200)), output_dir, top_n=top_n)
-
-    return {
+    report = {
         "task": task,
         "model_name": fitted["model_name"],
+        "primary_importance_type": primary_importance_type,
+        "top_features": top_features[:top_n],
+        "trend_analysis": trends,
         "native_feature_importance": native,
         "permutation_importance": permutation,
-        "partial_dependence_features": prioritized_features[:3],
+        "partial_dependence_features": prioritized_features,
         "partial_dependence_artifacts": pdp_artifacts,
         "shap": shap_report,
         "train_rows": int(len(fitted["X_train"])),
         "test_rows": int(len(fitted["X_test"])),
         "n_features": int(len(fitted["feature_names"])),
+        "passed_gates": ["explainability_generated"]
     }
+    return report
 
 
 def main() -> int:

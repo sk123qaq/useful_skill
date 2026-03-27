@@ -20,6 +20,8 @@ import common
 
 SMALL_FILE_BYTES = 150 * 1024 * 1024
 LARGE_FILE_BYTES = 1500 * 1024 * 1024
+AUTOSAMPLE_THRESHOLD_BYTES = 500 * 1024 * 1024
+DEFAULT_SAMPLE_ROWS = 100_000
 
 SUPPORTED_FORMATS = {".csv", ".tsv", ".xlsx", ".xlsm", ".xls", ".xlsb", ".parquet", ".feather", ".json", ".jsonl"}
 COMPRESSION_SUFFIXES = {".gz", ".gzip", ".bz2", ".xz"}
@@ -109,12 +111,22 @@ def build_file_read_plan(input_path: str) -> dict[str, Any]:
     if logical_suffix in {".xlsx", ".xlsm", ".xls"}: requires.append("openpyxl")
     if logical_suffix in {".parquet", ".feather"}: requires.append("pyarrow")
     
-    return {
+    plan = {
         **resolved, "recommended_backend": backend, "requires": sorted(set(requires)),
         "preview_available": logical_suffix in {".csv", ".tsv"}
     }
+    
+    if logical_size > AUTOSAMPLE_THRESHOLD_BYTES:
+        plan["sampling_recommended"] = True
+        plan["sampling_strategy"] = "head_chunk"
+        plan["suggested_sample_rows"] = DEFAULT_SAMPLE_ROWS
+        plan["warnings"] = plan.get("warnings", []) + [
+            f"Large file detected ({resolved.get('size_mb')} MB). Automatic sampling ({DEFAULT_SAMPLE_ROWS} rows) is recommended."
+        ]
+    
+    return plan
 
-def load_dataframe(input_path: str, sample_rows: int | None = None):
+def load_dataframe(input_path: str, sample_rows: int | None = None, auto_sample: bool = True):
     resolved = resolve_input_source(input_path)
     if not resolved.get("supported"):
         raise ValueError(f"Unsupported format: {resolved.get('format')}")
@@ -122,6 +134,12 @@ def load_dataframe(input_path: str, sample_rows: int | None = None):
     import pandas as pd
     logical_suffix = str(resolved.get("format", "")).lower()
     path = Path(str(resolved["path"]))
+    logical_size = int(resolved.get("member_size_bytes") or resolved.get("size_bytes") or 0)
+
+    # Automatic sampling strategy for large files
+    if sample_rows is None and auto_sample and logical_size > AUTOSAMPLE_THRESHOLD_BYTES:
+        sample_rows = DEFAULT_SAMPLE_ROWS
+        print(f"Note: Automatically sampling first {sample_rows} rows due to large file size ({resolved.get('size_mb')} MB).", file=sys.stderr)
 
     if resolved.get("kind") == "archive_member":
         with zipfile.ZipFile(path) as archive:

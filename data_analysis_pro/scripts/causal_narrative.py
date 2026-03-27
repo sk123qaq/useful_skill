@@ -683,6 +683,56 @@ def _markdown_for_section(section: dict[str, Any], heading_level: int = 2) -> li
     return lines
 
 
+def render_causal_narrative_markdown_fragment(narrative: dict[str, Any], heading_level_offset: int = 0) -> str:
+    """Render a fragment of the causal narrative suitable for embedding."""
+    h2 = "#" * (2 + heading_level_offset)
+    h3 = "#" * (3 + heading_level_offset)
+    
+    lines = [
+        f"{h2} {narrative.get('headline', 'Causal Analysis Summary')}",
+        "",
+        f"**Primary Question:** {narrative.get('question', 'N/A')}",
+        "",
+        f"**Methodology:** {narrative.get('method_label', 'N/A')}",
+        "",
+        f"{h3} Key Causal Estimate",
+    ]
+    
+    key_est = narrative.get("key_estimate", {})
+    lines.extend([
+        f"- **Metric:** {key_est.get('label', 'N/A')}",
+        f"- **Value:** {_fmt_number(key_est.get('value')) if not isinstance(key_est.get('value'), dict) else json.dumps(key_est.get('value'), ensure_ascii=False)}",
+        f"- **Direction:** {key_est.get('direction', 'N/A')}",
+        f"- **Significant:** {key_est.get('significant', 'N/A')}"
+    ])
+    
+    if key_est.get("p_value") is not None:
+        lines.append(f"- **p-value:** {_fmt_number(key_est.get('p_value'))}")
+        
+    lines.extend([
+        "",
+        f"{h3} Business Interpretation",
+        ""
+    ])
+    lines.extend([f"- {item}" for item in narrative.get("business_interpretation", [])] or ["- No interpretation recorded."])
+    
+    lines.extend([
+        "",
+        f"{h3} Identification Assumptions",
+        ""
+    ])
+    lines.extend([f"- {item}" for item in narrative.get("identification_assumptions", [])] or ["- No assumptions recorded."])
+    
+    lines.extend([
+        "",
+        f"{h3} Risks and Limits",
+        ""
+    ])
+    lines.extend([f"- {item}" for item in narrative.get("risks_and_limits", [])] or ["- No major risks auto-flagged."])
+    
+    return "\n".join(lines)
+
+
 def render_causal_narrative_markdown(narrative: dict[str, Any]) -> str:
     lines = [
         "# Causal Narrative Report",

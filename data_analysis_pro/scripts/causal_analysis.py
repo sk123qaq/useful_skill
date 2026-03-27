@@ -64,6 +64,9 @@ TASK_ALIASES = {
     "meta-learner": "cate",
     "meta_learner": "cate",
     "causal": "causal",
+    "dml_lite": "dml_lite",
+    "dml-lite": "dml_lite",
+    "dml_simple": "dml_lite",
 }
 
 
@@ -117,10 +120,23 @@ def _resolve_binary_values(df: pd.DataFrame, treatment_col: str, treatment_value
         return True, False
     if 1 in variants and 0 in variants:
         return 1, 0
-    if len(variants) != 2:
-        raise ValueError(f"{treatment_col} must have exactly two values unless treatment/control are configured.")
-    ordered = sorted(variants, key=str)
-    return ordered[1], ordered[0]
+    if len(variants) == 2:
+        ordered = sorted(variants, key=str)
+        return ordered[1], ordered[0]
+    
+    # Auto binarize by median if not specified and > 2 values
+    median = df[treatment_col].median()
+    return f"__GT_MEDIAN_{median}__", median
+
+
+def _set_treatment_indicator(df: pd.DataFrame, treatment_col: str, treatment_value: Any, control_value: Any) -> pd.DataFrame:
+    df = df.copy()
+    if isinstance(treatment_value, str) and treatment_value.startswith("__GT_MEDIAN_"):
+        median = float(control_value)
+        df["__treated__"] = (df[treatment_col] > median).astype(int)
+    else:
+        df["__treated__"] = (df[treatment_col] == treatment_value).astype(int)
+    return df
 
 
 def _std_mean_diff(treated: pd.Series, control: pd.Series) -> float:
@@ -344,6 +360,10 @@ def difference_in_differences_analysis(df: pd.DataFrame, config: dict[str, Any],
     treatment_value, control_value = _resolve_binary_values(
         working, treatment_col, config.get("treatment_value"), config.get("control_value")
     )
+    working = _set_treatment_indicator(working, treatment_col, treatment_value, control_value)
+    if isinstance(treatment_value, str) and treatment_value.startswith("__GT_MEDIAN_"):
+        median = float(control_value)
+        treatment_value, control_value = f"> {median}", f"<= {median}"
 
     if post_col:
         working = working.dropna(subset=[post_col])
@@ -364,7 +384,6 @@ def difference_in_differences_analysis(df: pd.DataFrame, config: dict[str, Any],
         working["__post__"] = (working[period_col].astype(str) == str(post_value)).astype(int)
         post_col = period_col
 
-    working["__treated__"] = (working[treatment_col] == treatment_value).astype(int)
     subset = working.loc[working["__treated__"].isin([0, 1])].copy()
     group_period_means = (
         subset.groupby(["__treated__", "__post__"])[outcome_col].mean().rename("mean_outcome").reset_index()
@@ -507,7 +526,10 @@ def regression_discontinuity_analysis(df: pd.DataFrame, config: dict[str, Any], 
             config.get("treatment_value"),
             config.get("control_value"),
         )
-        local["__treated__"] = (local[treatment_col] == treatment_value).astype(int)
+        local = _set_treatment_indicator(local, treatment_col, treatment_value, control_value)
+        if isinstance(treatment_value, str) and treatment_value.startswith("__GT_MEDIAN_"):
+            median = float(control_value)
+            treatment_value, control_value = f"> {median}", f"<= {median}"
     else:
         local["__treated__"] = (local["running_centered"] >= 0).astype(int)
         treatment_value, control_value = 1, 0
@@ -686,8 +708,13 @@ def double_machine_learning_analysis(df: pd.DataFrame, config: dict[str, Any], o
     treatment_value, control_value = _resolve_binary_values(
         working, treatment_col, config.get("treatment_value"), config.get("control_value")
     )
-    working = working.loc[working[treatment_col].isin([treatment_value, control_value])].copy()
-    working["__treated__"] = (working[treatment_col] == treatment_value).astype(int)
+    if isinstance(treatment_value, str) and treatment_value.startswith("__GT_MEDIAN_"):
+        median = float(control_value)
+        working["__treated__"] = (working[treatment_col] > median).astype(int)
+        treatment_value, control_value = f"> {median}", f"<= {median}"
+    else:
+        working = working.loc[working[treatment_col].isin([treatment_value, control_value])].copy()
+        working["__treated__"] = (working[treatment_col] == treatment_value).astype(int)
 
     encoded_features = _prepare_feature_frame(working, list(covariate_cols))
     treatment_indicator = working["__treated__"].astype(int)
@@ -840,8 +867,13 @@ def propensity_score_matching_analysis(df: pd.DataFrame, config: dict[str, Any],
     treatment_value, control_value = _resolve_binary_values(
         working, treatment_col, config.get("treatment_value"), config.get("control_value")
     )
-    working = working.loc[working[treatment_col].isin([treatment_value, control_value])].copy()
-    working["__treated__"] = (working[treatment_col] == treatment_value).astype(int)
+    if isinstance(treatment_value, str) and treatment_value.startswith("__GT_MEDIAN_"):
+        median = float(control_value)
+        working["__treated__"] = (working[treatment_col] > median).astype(int)
+        treatment_value, control_value = f"> {median}", f"<= {median}"
+    else:
+        working = working.loc[working[treatment_col].isin([treatment_value, control_value])].copy()
+        working["__treated__"] = (working[treatment_col] == treatment_value).astype(int)
 
     feature_frame = _prepare_feature_frame(working, list(covariate_cols))
     model = LogisticRegression(max_iter=1000)
@@ -1333,8 +1365,13 @@ def doubly_robust_analysis(df: pd.DataFrame, config: dict[str, Any], output_dir:
     treatment_value, control_value = _resolve_binary_values(
         working, treatment_col, config.get("treatment_value"), config.get("control_value")
     )
-    working = working.loc[working[treatment_col].isin([treatment_value, control_value])].copy()
-    working["__treated__"] = (working[treatment_col] == treatment_value).astype(int)
+    if isinstance(treatment_value, str) and treatment_value.startswith("__GT_MEDIAN_"):
+        median = float(control_value)
+        working["__treated__"] = (working[treatment_col] > median).astype(int)
+        treatment_value, control_value = f"> {median}", f"<= {median}"
+    else:
+        working = working.loc[working[treatment_col].isin([treatment_value, control_value])].copy()
+        working["__treated__"] = (working[treatment_col] == treatment_value).astype(int)
 
     encoded_features = _prepare_feature_frame(working, list(covariate_cols))
     treatment_indicator = working["__treated__"].astype(int)
@@ -1486,8 +1523,13 @@ def uplift_analysis(df: pd.DataFrame, config: dict[str, Any], output_dir: Path |
     treatment_value, control_value = _resolve_binary_values(
         working, treatment_col, config.get("treatment_value"), config.get("control_value")
     )
-    working = working.loc[working[treatment_col].isin([treatment_value, control_value])].copy()
-    working["__treated__"] = (working[treatment_col] == treatment_value).astype(int)
+    if isinstance(treatment_value, str) and treatment_value.startswith("__GT_MEDIAN_"):
+        median = float(control_value)
+        working["__treated__"] = (working[treatment_col] > median).astype(int)
+        treatment_value, control_value = f"> {median}", f"<= {median}"
+    else:
+        working = working.loc[working[treatment_col].isin([treatment_value, control_value])].copy()
+        working["__treated__"] = (working[treatment_col] == treatment_value).astype(int)
 
     encoded_features = _prepare_feature_frame(working, list(feature_cols))
     binary_outcome = _is_binary_outcome(working[outcome_col])
@@ -1617,8 +1659,13 @@ def orthogonal_learner_analysis(df: pd.DataFrame, config: dict[str, Any], output
     treatment_value, control_value = _resolve_binary_values(
         working, treatment_col, config.get("treatment_value"), config.get("control_value")
     )
-    working = working.loc[working[treatment_col].isin([treatment_value, control_value])].copy()
-    working["__treated__"] = (working[treatment_col] == treatment_value).astype(int)
+    if isinstance(treatment_value, str) and treatment_value.startswith("__GT_MEDIAN_"):
+        median = float(control_value)
+        working["__treated__"] = (working[treatment_col] > median).astype(int)
+        treatment_value, control_value = f"> {median}", f"<= {median}"
+    else:
+        working = working.loc[working[treatment_col].isin([treatment_value, control_value])].copy()
+        working["__treated__"] = (working[treatment_col] == treatment_value).astype(int)
 
     encoded_features = _prepare_feature_frame(working, list(feature_cols))
     treatment_indicator = working["__treated__"].astype(int)
@@ -1761,8 +1808,13 @@ def cate_meta_learner_analysis(df: pd.DataFrame, config: dict[str, Any], output_
     treatment_value, control_value = _resolve_binary_values(
         working, treatment_col, config.get("treatment_value"), config.get("control_value")
     )
-    working = working.loc[working[treatment_col].isin([treatment_value, control_value])].copy()
-    working["__treated__"] = (working[treatment_col] == treatment_value).astype(int)
+    if isinstance(treatment_value, str) and treatment_value.startswith("__GT_MEDIAN_"):
+        median = float(control_value)
+        working["__treated__"] = (working[treatment_col] > median).astype(int)
+        treatment_value, control_value = f"> {median}", f"<= {median}"
+    else:
+        working = working.loc[working[treatment_col].isin([treatment_value, control_value])].copy()
+        working["__treated__"] = (working[treatment_col] == treatment_value).astype(int)
 
     encoded_features = _prepare_feature_frame(working, list(feature_cols))
     treatment_indicator = working["__treated__"].astype(int)
@@ -1949,8 +2001,103 @@ def causal_suite(df: pd.DataFrame, config: dict[str, Any], output_dir: Path | No
     }
 
 
+def suggest_confounders(df: pd.DataFrame, treatment_col: str, outcome_col: str, threshold: float = 0.1) -> list[str]:
+    # Ensure treatment and outcome are numeric for correlation
+    temp_df = df.copy()
+    temp_df[treatment_col] = pd.to_numeric(temp_df[treatment_col], errors="coerce")
+    temp_df[outcome_col] = pd.to_numeric(temp_df[outcome_col], errors="coerce")
+    
+    # Select numeric columns only
+    numeric_df = temp_df.select_dtypes(include=[np.number])
+    if treatment_col not in numeric_df.columns or outcome_col not in numeric_df.columns:
+        return []
+        
+    corrs = numeric_df.corr()
+    if treatment_col not in corrs.columns or outcome_col not in corrs.columns:
+        return []
+        
+    t_corr = corrs[treatment_col].abs()
+    y_corr = corrs[outcome_col].abs()
+    
+    candidates = []
+    for col in numeric_df.columns:
+        if col in [treatment_col, outcome_col]:
+            continue
+        if t_corr[col] > threshold and y_corr[col] > threshold:
+            candidates.append(col)
+            
+    return candidates
+
+
+def dml_lite_analysis(df: pd.DataFrame, outcome_col: str, treatment_col: str, covariate_cols: list[str], output_dir: Path | None = None) -> dict[str, Any]:
+    from sklearn.linear_model import LinearRegression
+    
+    working = df.copy()
+    working[outcome_col] = pd.to_numeric(working[outcome_col], errors="coerce")
+    working[treatment_col] = pd.to_numeric(working[treatment_col], errors="coerce")
+    working = working.dropna(subset=[outcome_col, treatment_col])
+    
+    if not covariate_cols:
+        X = working[[treatment_col]]
+    else:
+        encoded_covariates = _prepare_feature_frame(working, list(covariate_cols))
+        X = pd.concat([working[[treatment_col]], encoded_covariates], axis=1)
+        
+    y = working[outcome_col]
+    
+    model = LinearRegression()
+    model.fit(X, y)
+    
+    # The first coefficient is for treatment_col
+    ate = float(model.coef_[0])
+    
+    # For std_error, we'll try to use statsmodels if available
+    std_error = 0.0
+    p_value = 1.0
+    if module_available("statsmodels"):
+        import statsmodels.api as sm
+        X_sm = sm.add_constant(X)
+        res = sm.OLS(y, X_sm).fit()
+        if treatment_col in res.params:
+            ate = float(res.params[treatment_col])
+            std_error = float(res.bse[treatment_col])
+            p_value = float(res.pvalues[treatment_col])
+            
+    interpretation = f"The estimated Average Treatment Effect (ATE) is {ate:.4f}. "
+    if std_error > 0:
+        interpretation += f"Standard error: {std_error:.4f}, p-value: {p_value:.4f}."
+    else:
+        interpretation += "Standard error not available."
+        
+    return {
+        "task": "dml_lite",
+        "ate": ate,
+        "std_error": std_error,
+        "p_value": p_value,
+        "interpretation": interpretation,
+        "outcome_col": outcome_col,
+        "treatment_col": treatment_col,
+        "covariate_cols": list(covariate_cols),
+        "artifacts": []
+    }
+
+
 def run_causal_analysis(df: pd.DataFrame, task: str, config: dict[str, Any], output_dir: Path | None = None) -> dict[str, Any]:
     normalized = normalize_task(task)
+    if normalized == "dml_lite":
+        outcome_col = config.get("outcome_col")
+        treatment_col = config.get("treatment_col")
+        covariate_cols = config.get("covariate_cols") or config.get("feature_cols", [])
+        
+        # Call suggest_confounders
+        suggested = suggest_confounders(df, treatment_col, outcome_col)
+        # Merge suggested with existing covariates
+        all_covariates = _dedupe_columns(list(covariate_cols) + suggested)
+        
+        report = dml_lite_analysis(df, outcome_col, treatment_col, all_covariates, output_dir=output_dir)
+        report["suggested_confounders"] = suggested
+        return report
+
     if normalized == "did":
         return difference_in_differences_analysis(df, config, output_dir=output_dir)
     if normalized == "rd":

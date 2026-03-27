@@ -14,6 +14,9 @@ import numpy as np
 sys.path.append(str(Path(__file__).parent))
 import common
 import io_router
+from metadata_manager import MetadataManager
+
+manager = MetadataManager()
 
 def missing_summary(df) -> dict[str, Any]:
     counts = df.isna().sum()
@@ -112,16 +115,41 @@ def encode_categoricals(df, columns: list[str] | None = None, dummy_na: bool = T
     target_cols = columns or list(frame.select_dtypes(exclude=["number", "bool"]).columns)
     if not target_cols: return frame
     frame[target_cols] = frame[target_cols].fillna("__MISSING__").astype("string")
-    return pd.get_dummies(frame, columns=target_cols, dummy_na=dummy_na)
+    result = pd.get_dummies(frame, columns=target_cols, dummy_na=dummy_na)
+    
+    # Register Lineage for Categorical Encoding
+    for col in target_cols:
+        derived = [c for c in result.columns if c.startswith(f"{col}_")]
+        for d in derived:
+            manager.register_lineage(
+                target=d,
+                sources=[col],
+                operation="one_hot_encoding",
+                reason=f"Derived from categorical feature '{col}'"
+            )
+    return result
 
 def add_calendar_features(df, time_col: str):
     if time_col not in df.columns: return df
     frame = df.copy()
     t = pd.to_datetime(frame[time_col], errors="coerce")
-    frame[f"{time_col}_year"] = t.dt.year
-    frame[f"{time_col}_month"] = t.dt.month
-    frame[f"{time_col}_day"] = t.dt.day
-    frame[f"{time_col}_dow"] = t.dt.dayofweek
+    
+    new_cols = {
+        f"{time_col}_year": t.dt.year,
+        f"{time_col}_month": t.dt.month,
+        f"{time_col}_day": t.dt.day,
+        f"{time_col}_dow": t.dt.dayofweek
+    }
+    
+    for name, series in new_cols.items():
+        frame[name] = series
+        # Register Lineage for Calendar Features
+        manager.register_lineage(
+            target=name,
+            sources=[time_col],
+            operation="calendar_extraction",
+            reason=f"Extracted from time column '{time_col}'"
+        )
     return frame
 
 def apply_cleaning(df, config: dict[str, Any]) -> tuple[pd.DataFrame, dict[str, Any]]:
@@ -136,12 +164,26 @@ def apply_cleaning(df, config: dict[str, Any]) -> tuple[pd.DataFrame, dict[str, 
             before = len(frame)
             frame = frame.dropna(subset=cols)
             report["actions"].append(f"Dropped {before - len(frame)} rows with missing values")
+            # Register Lineage for Row Dropping
+            manager.register_lineage(
+                target="dataset",
+                sources=cols,
+                operation="missing_value_drop",
+                reason=f"Dropped {before - len(frame)} rows due to nulls in {cols}"
+            )
         elif strat in ["mean", "median", "mode"]:
             for col in cols:
                 if col in frame.columns:
                     val = getattr(frame[col], strat)()
                     if isinstance(val, pd.Series): val = val.iloc[0]
                     frame[col] = frame[col].fillna(val)
+                    # Register Lineage for Imputation
+                    manager.register_lineage(
+                        target=col,
+                        sources=[col],
+                        operation=f"imputation_{strat}",
+                        reason=f"Filled missing values with column {strat}: {val}"
+                    )
             report["actions"].append(f"Filled missing in {cols} with {strat}")
 
     dedupe_config = _normalize_drop_duplicates_config(config.get("drop_duplicates"))
@@ -150,6 +192,16 @@ def apply_cleaning(df, config: dict[str, Any]) -> tuple[pd.DataFrame, dict[str, 
         subset, missing_subset = _normalize_subset(frame, dedupe_config["subset"])
         frame = frame.drop_duplicates(subset=subset, keep=dedupe_config["keep"])
         removed = before - len(frame)
+        
+        # Register Lineage for Deduplication
+        if removed > 0:
+            manager.register_lineage(
+                target="dataset", 
+                sources=list(frame.columns), 
+                operation="drop_duplicates", 
+                reason=f"Removed {removed} duplicates (keep={dedupe_config['keep']})"
+            )
+
         dedupe_report: dict[str, Any] = {
             "removed_rows": removed,
             "keep": dedupe_config["keep"],
@@ -160,12 +212,45 @@ def apply_cleaning(df, config: dict[str, Any]) -> tuple[pd.DataFrame, dict[str, 
         report["dedupe"] = dedupe_report
         if subset:
             report["actions"].append(
-                f"Removed {removed} duplicate rows using key columns {subset} (keep={dedupe_config['keep']})"
+                f"Removed {removed} duplicate rows based on columns {subset} (keep={dedupe_config['keep']})"
             )
         else:
             report["actions"].append(
                 f"Removed {removed} exact duplicate rows across all columns (keep={dedupe_config['keep']})"
             )
+
+    # Outlier Capping
+    if "outlier_capping" in config:
+        cap_config = config["outlier_capping"]
+        target_cols = cap_config.get("columns", {})
+        capped_info = []
+        for col, params in target_cols.items():
+            if col not in frame.columns:
+                continue
+            
+            method = params.get("method", "quantile")
+            if method == "quantile":
+                upper_q = params.get("upper", 1.0)
+                lower_q = params.get("lower", 0.0)
+                upper_val = frame[col].quantile(upper_q)
+                lower_val = frame[col].quantile(lower_q)
+            else: # fixed
+                upper_val = params.get("upper", float("inf"))
+                lower_val = params.get("lower", float("-inf"))
+            
+            frame[col] = frame[col].clip(lower=lower_val, upper=upper_val)
+            capped_info.append(f"{col}({method}: {lower_val} to {upper_val})")
+            
+            # Register Lineage for Outlier Capping per column
+            manager.register_lineage(
+                target=col,
+                sources=[col],
+                operation="outlier_capping",
+                reason=f"Applied capping via {method} (lower: {lower_val}, upper: {upper_val})"
+            )
+        
+        if capped_info:
+            report["actions"].append(f"Applied outlier capping to: {', '.join(capped_info)}")
 
     return frame, report
 

@@ -41,5 +41,10 @@ def main():
     else:
         print("❌ Core dependencies missing. Run: " + common.install_hint(common.DEPENDENCY_GROUPS['core']))
 
+    # Save snapshot
+    snapshot_path = Path("env_snapshot.json")
+    common.write_json(snapshot_path, report)
+    print(f"\nEnvironment snapshot saved to: {snapshot_path}")
+
 if __name__ == "__main__":
     main()

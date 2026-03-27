@@ -26,6 +26,37 @@ def _top_values(series: pd.Series, top_n: int) -> list[dict[str, Any]]:
         for value, count in counts.items()
     ]
 
+def infer_semantic_type(series: pd.Series, column_name: str, row_count: int, unique_count: int) -> str:
+    # 1. Check for Datetime
+    if pd.api.types.is_datetime64_any_dtype(series):
+        return "Datetime"
+    
+    # Try converting to datetime if object
+    if series.dtype == "object" or pd.api.types.is_string_dtype(series):
+        # Sample non-null values for speed
+        sample = series.dropna().head(100)
+        if not sample.empty:
+            try:
+                converted = pd.to_datetime(sample, errors="coerce")
+                if converted.notna().mean() > 0.8:
+                    return "Datetime"
+            except (ValueError, TypeError):
+                pass
+
+    # 2. Check for ID heuristic (High uniqueness + naming)
+    if unique_count == row_count and row_count > 0:
+        return "ID"
+    if "id" in column_name.lower() or "key" in column_name.lower() or "uuid" in column_name.lower():
+        if unique_count > row_count * 0.9 and row_count > 0:
+            return "ID"
+
+    # 3. Check for Numeric
+    if pd.api.types.is_numeric_dtype(series):
+        return "Numeric"
+
+    # 4. Default to Categorical
+    return "Categorical"
+
 def build_column_profile(df: pd.DataFrame, target: str | None = None, top_n: int = 5) -> dict[str, Any]:
     profiles: list[dict[str, Any]] = []
     row_count = len(df)
@@ -35,6 +66,8 @@ def build_column_profile(df: pd.DataFrame, target: str | None = None, top_n: int
         unique_count = int(series.nunique(dropna=True))
         non_null = series.dropna()
         dominant_share = float(non_null.astype(str).value_counts(normalize=True).iloc[0]) if not non_null.empty else 0.0
+        
+        semantic_type = infer_semantic_type(series, column, row_count, unique_count)
         
         flags: list[str] = []
         if unique_count <= 1: flags.append("constant")
@@ -48,6 +81,7 @@ def build_column_profile(df: pd.DataFrame, target: str | None = None, top_n: int
         profiles.append({
             "column": column,
             "dtype": str(series.dtype),
+            "semantic_type": semantic_type,
             "missing_rate": missing_rate,
             "unique_count": unique_count,
             "dominant_share": dominant_share,
