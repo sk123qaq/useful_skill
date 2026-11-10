@@ -1,0 +1,331 @@
+{
+  "group_col": "treat_out",
+  "control": 0,
+  "treatment": 1,
+  "alpha": 0.05,
+  "variant_counts": {
+    "0": 2814,
+    "1": 2779
+  },
+  "sample_ratio_mismatch": {
+    "observed_counts": {
+      "0": 2814,
+      "1": 2779
+    },
+    "expected_counts": {
+      "0": 2796.5,
+      "1": 2796.5
+    },
+    "expected_allocation": {
+      "0": 0.5,
+      "1": 0.5
+    },
+    "chi2_statistic": 0.2190237797246558,
+    "p_value": 0.6397847580012765,
+    "is_mismatch": false
+  },
+  "metrics": {
+    "responded": {
+      "metric_type": "binary",
+      "test": "two_sample_proportion_z_test",
+      "control": {
+        "n": 2814,
+        "successes": 1562,
+        "rate": 0.5550817341862118
+      },
+      "treatment": {
+        "n": 2779,
+        "successes": 803,
+        "rate": 0.28895286074127385
+      },
+      "absolute_lift": -0.2661288734449379,
+      "relative_lift": -0.4794408770000354,
+      "confidence_interval": [
+        -0.29105173066028256,
+        -0.24120601622959326
+      ],
+      "p_value": 3.05873731784356e-90,
+      "statistic": -20.143660330066346,
+      "statistically_significant": true,
+      "effect_size": {
+        "name": "cohen_h",
+        "value": -0.5461417572686342
+      },
+      "role": "primary",
+      "preferred_direction": "increase",
+      "practical_significance_threshold": 0.02,
+      "practically_significant": true,
+      "multiple_testing": {
+        "method": "holm",
+        "raw_p_value": 3.05873731784356e-90,
+        "adjusted_p_value": 6.11747463568712e-90,
+        "rejected": true
+      },
+      "sequential_monitoring": {
+        "method": "obrien_fleming",
+        "information_fraction": 0.5,
+        "current_look": null,
+        "total_looks": 2,
+        "adjusted_alpha": 0.005574596680784305,
+        "rejected": true,
+        "raw_p_value": 3.05873731784356e-90
+      },
+      "power_analysis": {
+        "target_power": 0.8,
+        "alpha": 0.05,
+        "observed_power": 1.0,
+        "required_n_per_group": 1528.0913698818044,
+        "current_n_per_group": 2814,
+        "underpowered_for_target": false
+      }
+    },
+    "totalpop": {
+      "metric_type": "continuous",
+      "test": "welch_t_test",
+      "control": {
+        "n": 2814,
+        "mean": 8.473491542288558,
+        "std": 10.556664773719252
+      },
+      "treatment": {
+        "n": 2779,
+        "mean": 8.633789348686578,
+        "std": 11.018349679241142
+      },
+      "absolute_lift": 0.16029780639802027,
+      "relative_lift": 0.01891756256532786,
+      "confidence_interval": [
+        -0.40546856712369683,
+        0.7260641799197374
+      ],
+      "p_value": 0.5786197887875453,
+      "statistic": 0.5554345028864606,
+      "degrees_of_freedom": 5573.96395555636,
+      "statistically_significant": false,
+      "effect_size": {
+        "name": "cohen_d",
+        "value": 0.014858166659818496
+      },
+      "variance_check": {
+        "test": "levene",
+        "p_value": 0.5928101491368181
+      },
+      "role": "secondary",
+      "preferred_direction": "increase",
+      "practical_significance_threshold": null,
+      "practically_significant": null,
+      "multiple_testing": {
+        "method": "holm",
+        "raw_p_value": 0.5786197887875453,
+        "adjusted_p_value": 0.5786197887875453,
+        "rejected": false
+      }
+    }
+  },
+  "balance_checks": {
+    "blackpercent": {
+      "metric_type": "continuous",
+      "test": "welch_t_test",
+      "control": {
+        "n": 2814,
+        "mean": 0.09270130209488274,
+        "std": 0.1546259019540969
+      },
+      "treatment": {
+        "n": 2779,
+        "mean": 0.091754665424973,
+        "std": 0.1543105075553255
+      },
+      "absolute_lift": -0.0009466366699097395,
+      "relative_lift": -0.010211686875129614,
+      "confidence_interval": [
+        -0.009044953615255428,
+        0.007151680275435949
+      ],
+      "p_value": 0.8187562776950446,
+      "statistic": -0.22915570990907905,
+      "degrees_of_freedom": 5590.386434818048,
+      "statistically_significant": false,
+      "effect_size": {
+        "name": "cohen_d",
+        "value": -0.006128317010528015
+      },
+      "variance_check": {
+        "test": "levene",
+        "p_value": 0.7162510988623225
+      }
+    },
+    "medianhhincom": {
+      "metric_type": "continuous",
+      "test": "welch_t_test",
+      "control": {
+        "n": 2814,
+        "mean": 4.326253589196873,
+        "std": 1.3773896336318148
+      },
+      "treatment": {
+        "n": 2779,
+        "mean": 4.400189276718244,
+        "std": 1.4401525466031582
+      },
+      "absolute_lift": 0.07393568752137103,
+      "relative_lift": 0.017090003162550736,
+      "confidence_interval": [
+        4.883436619880499e-05,
+        0.14782254067654327
+      ],
+      "p_value": 0.04984882381591145,
+      "statistic": 1.9616854465421538,
+      "degrees_of_freedom": 5572.8719476119895,
+      "statistically_significant": true,
+      "effect_size": {
+        "name": "cohen_d",
+        "value": 0.05247669809616501
+      },
+      "variance_check": {
+        "test": "levene",
+        "p_value": 0.02398055352514422
+      }
+    },
+    "south": {
+      "metric_type": "binary",
+      "test": "two_sample_proportion_z_test",
+      "control": {
+        "n": 2814,
+        "successes": 761,
+        "rate": 0.27043354655294954
+      },
+      "treatment": {
+        "n": 2779,
+        "successes": 744,
+        "rate": 0.26772220223101834
+      },
+      "absolute_lift": -0.0027113443219312083,
+      "relative_lift": -0.010025917111582681,
+      "confidence_interval": [
+        -0.025956495444198643,
+        0.020533806800336226
+      ],
+      "p_value": 0.8191743076953576,
+      "statistic": -0.22860709742536703,
+      "statistically_significant": false,
+      "effect_size": {
+        "name": "cohen_h",
+        "value": -0.0061138017461157546
+      }
+    },
+    "leg_democrat": {
+      "metric_type": "binary",
+      "test": "two_sample_proportion_z_test",
+      "control": {
+        "n": 2814,
+        "successes": 1501,
+        "rate": 0.5334044065387349
+      },
+      "treatment": {
+        "n": 2779,
+        "successes": 1473,
+        "rate": 0.5300467794170565
+      },
+      "absolute_lift": -0.0033576271216784193,
+      "relative_lift": -0.006294712005598316,
+      "confidence_interval": [
+        -0.02951272186601854,
+        0.022797467622661702
+      ],
+      "p_value": 0.8013447385890298,
+      "statistic": -0.2516071408191841,
+      "statistically_significant": false,
+      "effect_size": {
+        "name": "cohen_h",
+        "value": -0.006728826031798363
+      }
+    },
+    "leg_senator": {
+      "metric_type": "binary",
+      "test": "two_sample_proportion_z_test",
+      "control": {
+        "n": 2814,
+        "successes": 739,
+        "rate": 0.26261549395877753
+      },
+      "treatment": {
+        "n": 2779,
+        "successes": 737,
+        "rate": 0.26520331054336094
+      },
+      "absolute_lift": 0.0025878165845834022,
+      "relative_lift": 0.009854013354557095,
+      "confidence_interval": [
+        -0.02051471909899209,
+        0.025690352268158894
+      ],
+      "p_value": 0.8262235381273231,
+      "statistic": 0.21954755714293728,
+      "statistically_significant": false,
+      "effect_size": {
+        "name": "cohen_h",
+        "value": 0.005871398882895784
+      }
+    }
+  },
+  "multiple_testing": {
+    "applied": true,
+    "method": "holm",
+    "metric_names": [
+      "responded",
+      "totalpop"
+    ],
+    "alpha": 0.05
+  },
+  "sequential_monitoring": {
+    "applied": true,
+    "method": "obrien_fleming",
+    "metric_names": [
+      "responded"
+    ],
+    "information_fraction": 0.5,
+    "current_look": null,
+    "total_looks": 2,
+    "adjusted_alpha": 0.005574596680784305
+  },
+  "power_analysis": {
+    "applied": true,
+    "metric_names": [
+      "responded"
+    ],
+    "target_power": 0.8
+  },
+  "srm_p_value": 0.6397847580012765,
+  "balance_test": {
+    "alpha": 0.05,
+    "bonferroni_threshold": 0.01,
+    "p_values": {
+      "blackpercent": 0.8187562776950446,
+      "medianhhincom": 0.04984882381591145,
+      "south": 0.8191743076953576,
+      "leg_democrat": 0.8013447385890298,
+      "leg_senator": 0.8262235381273231
+    },
+    "failures": {},
+    "marginal": {
+      "medianhhincom": 0.04984882381591145
+    },
+    "passed": true
+  },
+  "balance_passed": true,
+  "primary_metric": "responded",
+  "effect": -0.2661288734449379,
+  "p_value": 3.05873731784356e-90,
+  "primary_metrics": [
+    "responded"
+  ],
+  "decision": {
+    "status": "do_not_ship_treatment",
+    "primary_losses": [
+      "responded"
+    ],
+    "guardrail_regressions": [],
+    "summary": "Treatment shows statistically significant regressions on a primary or guardrail metric."
+  }
+}

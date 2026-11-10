@@ -1,4 +1,0 @@
-mlx_audio
-numpy
-scipy
-sounddevice

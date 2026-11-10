@@ -1,84 +1,57 @@
-# 建模策略
+# Modeling Policy
 
-## 当前定位
+## 切分
 
-本文件描述的是 `data_analysis_pro` 当前的轻量建模原则，主要服务于：
+| 数据结构 | 允许策略 | 禁止 |
+|---|---|---|
+| 有时间列，预测未来 | `temporal` / `expanding` / `rolling` | 随机 `kfold` |
+| 无时间列，独立样本 | `kfold` | 按 target 排序后切 |
+| 同组样本（会员/门店/患者） | `group` | 同组跨 train/test |
+| 面板/多层 | 时间 + group 组合；先聚合或明确层级 | 把同一实体多行随机分到两边 |
 
-- `baseline_runner.py`
-- `model_catalog.py`
-- `gate_evaluator.py`
+`split_plan.py` 的 `validate` 会检查：
 
-它不是调参平台、状态机，也不依赖额外的 decision JSON。
+- 索引越界/重叠；
+- 测试折之间重叠；
+- 时间策略下训练集时间 < 测试集时间。
 
-## 基准优先
+失败就修 plan，不要绕过。
 
-对于预测性工作，默认顺序应是：
+## 基线
 
-1. 先跑 dummy baseline
-2. 再跑线性或广义线性基线
-3. 最后再看树模型是否值得
+预测分支的最低要求：
 
-当前第一阶段推荐阶梯：
+1. `dummy`（分类 most_frequent / 回归 mean）。
+2. 至少一个非 dummy：`linear_regression`/`logistic_regression`/`random_forest_*`。
+3. 同一 split、同一预处理、同一指标。
 
-### 分类
-- `dummy_most_frequent`
-- `logistic_regression`
-- `random_forest_classifier`
+通过线：
 
-### 回归
-- `dummy_mean`
-- `dummy_median`
-- `linear_regression`
-- `random_forest_regressor`
+- 分类：最佳非 dummy 比 dummy 高 ≥0.02（accuracy/F1 等）。
+- 回归：RMSE/MAE 相对 dummy 下降 ≥5%。
+- 稳定性：各折指标 std/mean ≤0.2。
 
-## 当前结果复核时使用的关键阈值
+不满足 → `exploratory`，不是“模型效果不错”。
 
-这些阈值不是通用真理，而是当前 `gate_evaluator.py` 的真实实现：
+## 指标
 
-- 分类任务的 baseline gate：
-  - 最优非 dummy 模型需要比最优 dummy 在主指标上至少高 `0.02`
-- 回归任务的 baseline gate：
-  - 最优非 dummy 模型需要让主指标至少优于 dummy `5%`
-  - 当前实现等价于 `model_value <= dummy_value * 0.95`
-- 分类任务的 stability gate：
-  - 最优模型在主指标上的折间标准差应不高于 `0.08`
-- 回归任务的 stability gate：
-  - 最优模型在主指标上的折间标准差应不高于均值绝对值的 `20%`
+- 分类不平衡：不要只看 accuracy；看 F1/recall/AUC，并写清阈值。
+- 回归：RMSE/MAE 带单位；R² 只在同目标同切分下比较。
+- 排序：NDCG/MAP 需要明确的 relevance 定义。
+- 任何指标都要写“越高越好/越低越好”，避免方向误读。
 
-如果你在报告里写“模型可用”，最好至少能解释清楚它有没有越过这些门槛。
+## 解释
 
-## 实际建模时的轻量原则
+- 特征重要性不是因果效应。
+- 同期价格/同一行字段的高重要性，先怀疑泄漏。
+- SHAP/PDP 只在模型和数据版本固定时解释；不要跨模型混用。
+- 不要用“模型认为”替代业务机制；机制需要因果设计或外部证据。
 
-- 如果字段明显像 ID、订单号、用户号，先剔除或单独审查，再进建模。
-- 如果字段非常宽、编码后会爆炸，先收缩字段，不要直接把树模型当兜底方案。
-- 如果目标列类别极不平衡，不要只盯 `accuracy`，至少一起看：
-  - `balanced_accuracy`
-  - `f1_macro`
-  - 如果有概率分数，再看 `roc_auc`、`average_precision`
-- 如果问题天然是频数表或聚合表，优先把计数字段作为 `weight_col`，不要把它当普通特征。
+## 何时停止加模型
 
-## 何时停止升级
+- 非 dummy 已经赢 dummy，但提升 < 业务可感知阈值。
+- 增加模型复杂度没有带来稳定性提升。
+- 交叉验证方差大于均值改善。
+- 解释成本超过决策价值。
 
-下面这些情况出现时，优先停下来重审数据，而不是继续加模型复杂度：
-
-- 最优非 dummy 只比 dummy 略好一点
-- 折间波动很大
-- 重要特征里混入明显后验字段或泄露字段
-- 预测目标本身定义得不稳定
-- 字段口径还在变化
-
-## 关于“调参”
-
-当前代码里虽然有更丰富的候选模型目录，但 `data_analysis_pro` 现在没有稳定的“受监控调参流程”。
-
-因此：
-
-- 不要把“继续试几个更复杂模型”包装成系统化调参能力。
-- 如果确实要多试几个候选，应明确写这是手动扩展，而不是默认流程。
-- 如果交付依赖概率质量或阈值选择，当前 skill 也没有稳定的 calibration / threshold review 管线，不要过度承诺。
-
-## 防护准则
-
-- 可解释性输出不能被翻译成因果建议。
-- 随机森林更强，不等于更适合作为第一结论。
-- 如果目标问题更适合实验、因果或描述性分析，就不要用建模替代问题定义。
+停止时写“基线已足够/不够”，不要堆模型列表。

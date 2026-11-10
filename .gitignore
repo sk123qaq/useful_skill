@@ -21,17 +21,19 @@ venv/
 env/
 .venv-data-analysis/
 
-# Secrets
+# Secrets —— 只保留空模板 .env.example
 .env
 .env.*
 !.env.example
+*.pem
+*.key
 
 # Logs and temp files
 *.log
 *.tmp
 
-# Data-analysis local datasets and generated outputs
+# 测试与生成的中间产物（大文件不进仓）
+tests/tmp/
+*/tests/tmp/
 output/
 outputs/
-.pytest_cache/
-LOCAL_GITHUB_UPLOAD_GUIDE.md

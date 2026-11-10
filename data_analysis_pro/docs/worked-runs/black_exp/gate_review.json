@@ -1,0 +1,72 @@
+{
+  "stage": "gate",
+  "route": "experiment",
+  "status": "report_ready",
+  "max_evidence_grade": "report-ready",
+  "gate_results": {
+    "contract": {
+      "status": "pass",
+      "reasons": [],
+      "details": null
+    },
+    "data_quality": {
+      "status": "pass",
+      "reasons": [],
+      "details": {
+        "rows": 5593,
+        "source": "/tmp/black_politicians.csv"
+      }
+    },
+    "feature_risk": {
+      "status": "pass",
+      "reasons": [],
+      "details": {
+        "summary": {
+          "collection_artifact": 0,
+          "safe": 13,
+          "post_outcome": 0,
+          "unreviewed": 0,
+          "soft_proxy": 0,
+          "hard_leakage": 0
+        }
+      }
+    },
+    "split": {
+      "status": "not_applicable",
+      "reasons": [],
+      "details": null
+    },
+    "baseline": {
+      "status": "not_applicable",
+      "reasons": [],
+      "details": null
+    },
+    "causal": {
+      "status": "not_applicable",
+      "reasons": [],
+      "details": null
+    },
+    "experiment": {
+      "status": "pass",
+      "reasons": [],
+      "details": null
+    },
+    "claims": {
+      "status": "pass",
+      "reasons": [],
+      "details": {
+        "n_claims": 1
+      }
+    },
+    "report": {
+      "status": "not_applicable",
+      "reasons": [
+        "report_lint.json not yet generated"
+      ],
+      "details": null
+    }
+  },
+  "blockers": [],
+  "warnings": [],
+  "created_at": "2026-11-10T04:13:30+00:00"
+}

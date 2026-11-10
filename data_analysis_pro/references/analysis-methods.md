@@ -1,66 +1,50 @@
-# 关系筛查与描述性线索
+# Analysis Methods
 
-## 适用范围
+## 描述性
 
-当问题属于描述性或诊断性分析，且你已经有一个明确的 `target`，希望快速找出“哪些字段最值得继续看”时，使用 `scripts/relationship_screening.py`。
+`describe.py` 输出：
 
-当前 `data_analysis_pro` 并没有内建 `scripts/analysis_methods.py`。不要把本文件理解为“聚类 / Apriori / ANOVA / 根因分解”的现成实现清单。
+- 数值列：count/mean/std/min/median/max/missing/unique。
+- 分类列：count/top/missing/unique。
+- 相关矩阵：只作为线索，不是因果；高相关可能是定义式。
+- 分组：按 group/category 的均值/中位数/样本量。
+- 时间序列：首末值、变化%、ACF(1/5/20)、月均、周均尾 8 期、|z|≥3 异常、月度季节性。
+- `markdown_path`：可选人类可读摘要。
 
-## 当前内建能力
+规则：
 
-`relationship_screening.py` 会根据目标变量和候选变量的类型，自动选择一个轻量级的关系强度指标，并按 effect size 排序。
+- 样本量 <30 的分组不做“显著”措辞。
+- 百分比变化在基数接近 0 时无意义；写绝对值和基数。
+- 时间序列的趋势描述要说明窗口；不要用全样本均值掩盖结构变化。
+- 相关矩阵里的 `|r|>0.95` 先怀疑定义式/重复列，不要直接当发现。
 
-当前脚本实际覆盖的关系筛查包括：
+## 特征风险
 
-- 类别 vs 类别：`Cramer's V`
-- 类别 vs 数值：`eta squared`
-- 数值 vs 数值：`abs(Spearman r)`
+`feature_risk.py scan` 的机器标签只是**线索**：
 
-目标变量的类型也会被自动识别：
+| 标签 | 含义 | Agent 动作 |
+|---|---|---|
+| `hard_leakage` | target 副本、未来变量、\|corr\|≥0.999 | 排除；排除不了就停止 |
+| `post_outcome` | 结果发生后才会出现的字段 | 排除，除非做“结果解释”而非预测 |
+| `soft_proxy` | \|corr\|≥0.95 的同期变量 | 判断是否同一时点可得；预测中通常排除 |
+| `collection_artifact` | ID、常量、日期键 | 默认 `used=false` |
+| `unreviewed` | 未发现机械风险 | 必须人工确认 |
+| `safe` | 已确认可用 | 保留 |
 
-- 二值目标：`binary`
-- 少量类别目标：`categorical`
-- 连续目标：`numeric`
+`confirm` 必须覆盖所有列；每列写 `label` 和 `used`。不要为了让 gate 通过而把泄漏列标成 safe。
 
-## CLI
+## 关系筛查
 
-```bash
-python3 data_analysis_pro/scripts/relationship_screening.py \
-  --input-path data.csv \
-  --target label \
-  --top-k 20
-```
+不要再用“自动挑最相关 Top N”替代思考。正确顺序：
 
-参数很少：
+1. `describe.py` 看单变量和分组。
+2. 对候选关系画散点/箱线/时间序列。
+3. 用 `feature_risk.py` 排泄漏。
+4. 需要检验时，明确零假设、样本量、多重比较；不要对几十列逐列跑 p 值然后只报显著的。
 
-- `--input-path`：输入数据路径
-- `--target`：目标列
-- `--top-k`：返回前若干个候选关系，默认 `20`
+## 时间序列
 
-## 如何使用结果
-
-这个脚本适合做“第一轮筛查”，不适合单独作为最终结论。
-
-推荐用法：
-
-1. 先跑 `column_profile.py` 看字段质量和潜在 ID 字段。
-2. 再跑 `relationship_screening.py` 找出前几位候选特征。
-3. 对排名靠前的字段，继续用 `eda_stats.py`、交叉表、分组统计或图表做人工复核。
-
-## 当前未内建的能力
-
-下面这些主题在当前 skill 中没有稳定的现成脚本，不要误认为已经内建：
-
-- 聚类
-- Apriori / 购物篮分析
-- 单因素 ANOVA 工作流
-- KPI 根因分解 / contribution decomposition
-
-如果任务确实需要这些方法，应由 Agent 结合现有脚本和临时 Python 代码自行处理，而不是假设本 skill 已经封装好。
-
-## 防护准则
-
-- 高基数字段、主键、订单号、用户 ID 可能会得到虚高的关系分数，先结合 `column_profile.py` 判断它是不是标识符或泄露字段。
-- 关系强度只用于筛查，不等于业务重要性，更不等于因果关系。
-- 对小样本或严重不平衡数据，effect size 排名很容易不稳定，结论必须复核。
-- 如果字段经过 one-hot 或复杂编码，优先回到原始业务字段层面解释，而不是直接把编码列当业务发现。
+- 先画图，再做 ACF/差分/季节性。
+- 非平稳序列的相关/回归要先说明处理（差分、去趋势、协整）。
+- 预测评估必须按时间切分；随机 KFold 会高估。
+- 结构突变（政策、合约规则、统计口径）要单独标注，不要混进“趋势”。

@@ -1,0 +1,47 @@
+{
+  "task": "dml",
+  "treatment_col": "treat",
+  "outcome_col": "re78",
+  "covariate_cols": [
+    "age",
+    "educ",
+    "black",
+    "hisp",
+    "marr",
+    "nodegree",
+    "re74",
+    "re75"
+  ],
+  "treatment_value": true,
+  "control_value": false,
+  "n_rows_used": 445,
+  "n_splits": 3,
+  "average_treatment_effect": 2110.143977505394,
+  "naive_difference": 1794.342404270271,
+  "standard_error": 751.8370683553242,
+  "z_score": 2.806650624611293,
+  "p_value": 0.00500595027436912,
+  "confidence_interval": [
+    636.5433235289588,
+    3583.7446314818294
+  ],
+  "propensity_overlap": {
+    "lower": 0.24160848376768876,
+    "upper": 0.6649850090276992,
+    "share_in_common_support": 0.9910112359550561
+  },
+  "effective_treatment_variance": 0.24345894415020547,
+  "score_distribution": {
+    "min": -10820.830649464495,
+    "p25": -2085.506916088357,
+    "median": -46.08064837269226,
+    "p75": 1780.5467834789029,
+    "max": 33060.54834154765
+  },
+  "subgroup_effects": [],
+  "artifacts": [
+    "/tmp/nsw_dml/dml_residuals.csv",
+    "/tmp/nsw_dml/dml_residual_fit.png",
+    "/tmp/nsw_dml/dml_score_distribution.png"
+  ]
+}

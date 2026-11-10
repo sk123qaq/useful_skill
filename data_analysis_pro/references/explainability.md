@@ -21,7 +21,7 @@
 
 ## 一个非常重要的现实限制
 
-`model_explainability.py` 会重新拟合一个“选定模型”来生成解释结果。
+`model_explainability.py` 会重新拟合一个“选定模型”来生成解释结果；它不是对 `baseline_results.json` 中最佳模型的自动解释，必须在报告中记录 `fit_scope`。
 
 这意味着：
 

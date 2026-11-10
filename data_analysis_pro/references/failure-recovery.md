@@ -1,48 +1,35 @@
-# 失败恢复
+# Failure Recovery
 
-## 诚实的失败
+## 原则
 
-当运行被阻断或不安全时：
-- 保留已经成功产出的工件
-- 明确说明哪里卡住了
-- 说明哪些结论仍然成立，哪些结论不能成立
-- 给出最小下一步建议
+失败要暴露，不要被“清洗”掉。脚本报错、数据不足、假设不成立，都是结果的一部分。
 
-## 优先级
+## 常见失败
 
-相比于一份虽精美但具有误导性的报告，优先选择诚实的 `not_usable`（不可用）结果。
+| 现象 | 原因 | 动作 |
+|---|---|---|
+| 目录加载选错文件 | 旧版自动选最大文件 | 用 `io_router.py manifest` 列候选，显式 `--input-path` 选文件 |
+| `ParserError: Expected 1 fields` | CSV 开头有 `#` 注释 | 加 `--comment "#"`，不要手工删行 |
+| Excel 读到的是口径表 | 只读第一个 Sheet | `manifest` 看 Sheet，显式 `--sheet` |
+| `SimpleImputer does not support datetime64` | 时间列被当特征 | 切分用 `time_col`，特征里排除时间键 |
+| `Input y contains NaN` | target 末行缺失 | `clean.py` 处理或在 baseline 前显式 drop，并记录 |
+| 时间序列 CV 异常好 | 随机 KFold 泄漏 | 用 `split_plan.py create --strategy temporal` |
+| gate 空输入 report-ready | 旧版占位 gate | 用新版 `gate_evaluator.py`；空目录应 not_usable |
+| 报告没有 baseline/EDA | 旧 `report_export.py` 固定扫描 | 用 `report_bundle.py` + `report_lint.py` |
+| 因果估计不显著 | 效应小/样本小/识别弱 | 报告置信区间和假设；不要换模型直到显著 |
 
-## 当前 skill 的恢复方式
+## 降级路径
 
-`data_analysis_pro` 当前不是 checkpoint / continuation 系统。不要假设存在：
+1. **预测 → 描述**：target 泄漏不可修复、样本太短、baseline 不赢 dummy。
+2. **因果 → 描述/停止**：无对照、无重叠、平行趋势不成立、工具变量不满足排除性。
+3. **实验 → 停止**：SRM 失败、分流比例异常、样本量不足。
+4. **任何分支 → stop_and_report**：关键字段缺失、口径无法确认、数据质量不过。
 
-- `--continue-after-scout`
-- `--continue-after-baseline`
-- `judgment_context_after_scout`
-- `judgment_context_after_baseline`
-- `data_processing_decision.json`
-- `modeling_decision.json`
+降级要写进 `gate_review.json` 和最终答复，不要静默换问题。
 
-如果某个脚本失败，优先采用下面的降级方式：
+## 不能做
 
-1. 缩小问题范围
-2. 改用更小的原子脚本
-3. 用临时 Python 代码组合现有函数
-4. 明确停在当前证据边界，不硬凑完整流程
-
-## 失败时至少应保留的内容
-
-建议至少保留：
-
-- 用户要回答的问题
-- 输入数据路径或数据来源
-- 已成功运行的脚本及其输出路径
-- 报错脚本和核心错误信息
-- 还能安全说出的结论
-- 建议下一步
-
-## 常见降级路径
-
-- `causal_analysis.py` 跑不通：先退回 `column_profile.py`、`eda_stats.py`、`relationship_screening.py`，把问题降级为描述性或诊断性分析。
-- `experiment_analysis.py` 跑不通：先输出实验设计缺口、样本分布和原始指标摘要，不直接给显著性结论。
-- 基线建模条件不足：不要强行上模型，先做字段清洗、目标定义复核和 leakage 排查。
+- 为了跑通而删掉失败行/失败列，且不记录。
+- 把 `not_usable` 改成 `report-ready`。
+- 用另一个脚本的输出冒充失败脚本的结果。
+- 在报告里写“已检验”但实际没跑。

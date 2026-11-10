@@ -1,0 +1,280 @@
+{
+  "task": "psm",
+  "treatment_col": "treat",
+  "outcome_col": "re78",
+  "covariate_cols": [
+    "age",
+    "educ",
+    "black",
+    "hisp",
+    "marr",
+    "nodegree",
+    "re74",
+    "re75"
+  ],
+  "treatment_value": true,
+  "control_value": false,
+  "n_rows_used": 445,
+  "n_treated": 185,
+  "n_control": 260,
+  "matched_pairs": 167,
+  "average_treatment_effect_on_treated": 1863.0090355688621,
+  "confidence_interval": [
+    372.02484571725404,
+    3353.9932254204705
+  ],
+  "p_value": 0.01464054991481791,
+  "common_support": {
+    "lower": 0.2575485984282615,
+    "upper": 0.63570617928779,
+    "share_in_common_support": 0.9730337078651685
+  },
+  "balance": {
+    "before_matching": {
+      "mean_absolute_smd": 0.118824370179297,
+      "top_imbalanced_features": [
+        {
+          "feature": "nodegree",
+          "treated_mean": 0.7081081081081081,
+          "control_mean": 0.8346153846153846,
+          "smd": -0.30398643906182043
+        },
+        {
+          "feature": "hisp",
+          "treated_mean": 0.05945945945945946,
+          "control_mean": 0.1076923076923077,
+          "smd": -0.1745610713731719
+        },
+        {
+          "feature": "educ",
+          "treated_mean": 10.345945945945946,
+          "control_mean": 10.088461538461539,
+          "smd": 0.14121982079828682
+        },
+        {
+          "feature": "age",
+          "treated_mean": 25.816216216216215,
+          "control_mean": 25.053846153846155,
+          "smd": 0.10727712146617467
+        },
+        {
+          "feature": "marr",
+          "treated_mean": 0.1891891891891892,
+          "control_mean": 0.15384615384615385,
+          "smd": 0.09364070075641238
+        },
+        {
+          "feature": "re75",
+          "treated_mean": 1532.0553137837837,
+          "control_mean": 1266.9090024615384,
+          "smd": 0.08386324541782075
+        },
+        {
+          "feature": "black",
+          "treated_mean": 0.8432432432432433,
+          "control_mean": 0.8269230769230769,
+          "smd": 0.04388661137007063
+        },
+        {
+          "feature": "re74",
+          "treated_mean": 2095.573688648649,
+          "control_mean": 2107.0266584615383,
+          "smd": -0.00215995119061845
+        }
+      ],
+      "all_features": [
+        {
+          "feature": "nodegree",
+          "treated_mean": 0.7081081081081081,
+          "control_mean": 0.8346153846153846,
+          "smd": -0.30398643906182043
+        },
+        {
+          "feature": "hisp",
+          "treated_mean": 0.05945945945945946,
+          "control_mean": 0.1076923076923077,
+          "smd": -0.1745610713731719
+        },
+        {
+          "feature": "educ",
+          "treated_mean": 10.345945945945946,
+          "control_mean": 10.088461538461539,
+          "smd": 0.14121982079828682
+        },
+        {
+          "feature": "age",
+          "treated_mean": 25.816216216216215,
+          "control_mean": 25.053846153846155,
+          "smd": 0.10727712146617467
+        },
+        {
+          "feature": "marr",
+          "treated_mean": 0.1891891891891892,
+          "control_mean": 0.15384615384615385,
+          "smd": 0.09364070075641238
+        },
+        {
+          "feature": "re75",
+          "treated_mean": 1532.0553137837837,
+          "control_mean": 1266.9090024615384,
+          "smd": 0.08386324541782075
+        },
+        {
+          "feature": "black",
+          "treated_mean": 0.8432432432432433,
+          "control_mean": 0.8269230769230769,
+          "smd": 0.04388661137007063
+        },
+        {
+          "feature": "re74",
+          "treated_mean": 2095.573688648649,
+          "control_mean": 2107.0266584615383,
+          "smd": -0.00215995119061845
+        }
+      ]
+    },
+    "after_matching": {
+      "mean_absolute_smd": 0.04207419083182629,
+      "top_imbalanced_features": [
+        {
+          "feature": "marr",
+          "treated_mean": 0.16167664670658682,
+          "control_mean": 0.19760479041916168,
+          "smd": -0.09341189321563595
+        },
+        {
+          "feature": "re75",
+          "treated_mean": 1234.9784116766466,
+          "control_mean": 1466.5071493413172,
+          "smd": -0.07820878202235014
+        },
+        {
+          "feature": "nodegree",
+          "treated_mean": 0.7664670658682635,
+          "control_mean": 0.7485029940119761,
+          "smd": 0.04179647684145592
+        },
+        {
+          "feature": "black",
+          "treated_mean": 0.8622754491017964,
+          "control_mean": 0.8502994011976048,
+          "smd": 0.03404202960623708
+        },
+        {
+          "feature": "re74",
+          "treated_mean": 1760.7191281437122,
+          "control_mean": 1625.802402994012,
+          "smd": 0.030412398955860148
+        },
+        {
+          "feature": "hisp",
+          "treated_mean": 0.0658682634730539,
+          "control_mean": 0.0718562874251497,
+          "smd": -0.023578276222965863
+        },
+        {
+          "feature": "age",
+          "treated_mean": 25.179640718562876,
+          "control_mean": 25.32934131736527,
+          "smd": -0.022274714543864527
+        },
+        {
+          "feature": "educ",
+          "treated_mean": 10.215568862275449,
+          "control_mean": 10.191616766467066,
+          "smd": 0.01286895524624074
+        }
+      ],
+      "all_features": [
+        {
+          "feature": "marr",
+          "treated_mean": 0.16167664670658682,
+          "control_mean": 0.19760479041916168,
+          "smd": -0.09341189321563595
+        },
+        {
+          "feature": "re75",
+          "treated_mean": 1234.9784116766466,
+          "control_mean": 1466.5071493413172,
+          "smd": -0.07820878202235014
+        },
+        {
+          "feature": "nodegree",
+          "treated_mean": 0.7664670658682635,
+          "control_mean": 0.7485029940119761,
+          "smd": 0.04179647684145592
+        },
+        {
+          "feature": "black",
+          "treated_mean": 0.8622754491017964,
+          "control_mean": 0.8502994011976048,
+          "smd": 0.03404202960623708
+        },
+        {
+          "feature": "re74",
+          "treated_mean": 1760.7191281437122,
+          "control_mean": 1625.802402994012,
+          "smd": 0.030412398955860148
+        },
+        {
+          "feature": "hisp",
+          "treated_mean": 0.0658682634730539,
+          "control_mean": 0.0718562874251497,
+          "smd": -0.023578276222965863
+        },
+        {
+          "feature": "age",
+          "treated_mean": 25.179640718562876,
+          "control_mean": 25.32934131736527,
+          "smd": -0.022274714543864527
+        },
+        {
+          "feature": "educ",
+          "treated_mean": 10.215568862275449,
+          "control_mean": 10.191616766467066,
+          "smd": 0.01286895524624074
+        }
+      ]
+    },
+    "balance_improved": true
+  },
+  "propensity_model_top_coefficients": [
+    {
+      "feature": "nodegree",
+      "coefficient": -0.829234907522477
+    },
+    {
+      "feature": "hisp",
+      "coefficient": -0.6692795443604469
+    },
+    {
+      "feature": "marr",
+      "coefficient": 0.1442608643382771
+    },
+    {
+      "feature": "black",
+      "coefficient": -0.13580737351449287
+    },
+    {
+      "feature": "educ",
+      "coefficient": -0.05739329011233674
+    },
+    {
+      "feature": "age",
+      "coefficient": 0.005588810410072086
+    },
+    {
+      "feature": "re75",
+      "coefficient": 6.015341334982333e-05
+    },
+    {
+      "feature": "re74",
+      "coefficient": -3.0393720081480434e-05
+    }
+  ],
+  "artifacts": [
+    "/tmp/nsw_causal/psm_matched_pairs.csv",
+    "/tmp/nsw_causal/psm_propensity_overlap.png",
+    "/tmp/nsw_causal/psm_balance_smd.png"
+  ]
+}

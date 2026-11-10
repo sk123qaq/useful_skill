@@ -1,0 +1,27 @@
+{
+  "version": 1,
+  "estimand": "ATT",
+  "treatment": "treat",
+  "outcome": "re78",
+  "design": "psm",
+  "identification_assumptions": [
+    "conditional exchangeability given pre-treatment covariates",
+    "common support",
+    "no unmeasured confounding"
+  ],
+  "adjustment_set": [
+    "age",
+    "educ",
+    "black",
+    "hisp",
+    "marr",
+    "nodegree",
+    "re74",
+    "re75"
+  ],
+  "instrument": null,
+  "sensitivity_checks": [
+    "rosenbaum bounds"
+  ],
+  "created_at": "2026-11-10T04:11:29+00:00"
+}

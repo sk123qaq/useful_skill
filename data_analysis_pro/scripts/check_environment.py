@@ -1,50 +1,65 @@
 #!/usr/bin/env python3
+"""check_environment.py: dependency/tool readiness without side effects."""
+from __future__ import annotations
+
+import argparse
+import json
 import sys
 from pathlib import Path
 
-# Add the scripts directory to sys.path so we can import common
 sys.path.append(str(Path(__file__).parent))
-import common
+import common  # noqa: E402
 
-def main():
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="Check Data Analysis Pro dependencies.")
+    parser.add_argument("--output-path", default=None, help="optional env_snapshot.json path")
+    args = parser.parse_args()
+
     print("--- Data Analysis Pro: Environment Check ---")
     report = common.get_availability_report()
-    
     print(f"Python Version: {report['python_version']}")
     print(f"Timestamp: {report['timestamp']}")
     print(f"MPL Config Dir: {report['mpl_config_dir']}")
-    
+
     print("\nDependency Groups:")
     for group, modules in common.DEPENDENCY_GROUPS.items():
-        available = [m for m in modules if report['modules'].get(m)]
-        missing = [m for m in modules if not report['modules'].get(m)]
+        available = [m for m in modules if report["modules"].get(m)]
+        missing = [m for m in modules if not report["modules"].get(m)]
         status = "✅" if not missing else "⚠️" if available else "❌"
-        print(f"  {status} {group.capitalize()}: {', '.join(available)}")
+        print(f"  {status} {group.capitalize()}: {', '.join(available) or '-'}")
         if missing:
             print(f"    Missing: {', '.join(missing)}")
 
     print("\nExternal Tools:")
     for tool, info in common.EXTERNAL_TOOLS.items():
-        status = "✅" if report['tools'].get(tool) else "❌"
+        status = "✅" if report["tools"].get(tool) else "❌"
         print(f"  {status} {tool}: {info}")
 
-    font = common.configure_matplotlib_fonts()
+    try:
+        font = common.configure_matplotlib_fonts()
+    except Exception as exc:  # noqa: BLE001 - readiness check must not crash
+        font = None
+        print(f"\n⚠️ Matplotlib font check failed: {exc}")
     if font:
         print(f"\n✅ Matplotlib CJK Font: {font}")
     else:
         print("\n⚠️ Matplotlib CJK Font: Not found (Chinese charts may have boxes)")
 
+    core_ready = all(report["modules"].get(m) for m in common.DEPENDENCY_GROUPS["core"])
     print("\n--- Readiness Summary ---")
-    core_ready = all(report['modules'].get(m) for m in common.DEPENDENCY_GROUPS['core'])
     if core_ready:
         print("✅ Core analysis dependencies are ready.")
     else:
-        print("❌ Core dependencies missing. Run: " + common.install_hint(common.DEPENDENCY_GROUPS['core']))
+        missing = [m for m in common.DEPENDENCY_GROUPS["core"] if not report["modules"].get(m)]
+        print("❌ Core dependencies missing. Run: " + common.install_hint(missing))
 
-    # Save snapshot
-    snapshot_path = Path("env_snapshot.json")
-    common.write_json(snapshot_path, report)
-    print(f"\nEnvironment snapshot saved to: {snapshot_path}")
+    if args.output_path:
+        out = Path(args.output_path)
+        common.write_json(out, report)
+        print(f"\nEnvironment snapshot saved to: {out}")
+    return 0 if core_ready else 2
+
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

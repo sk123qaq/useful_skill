@@ -180,12 +180,24 @@ def get_availability_report() -> dict[str, Any]:
         "timestamp": now_utc_iso(),
     }
 
+def install_hint(missing: list[str], python: str | None = None) -> str:
+    """Return a copy-pasteable install command for missing modules."""
+    if not missing:
+        return "No missing dependencies."
+    py = python or sys.executable or "python3"
+    return f"{py} -m pip install " + " ".join(missing)
+
+
 def parse_json_arg(raw: str | None) -> dict[str, Any]:
-    if not raw: return {}
-    try:
-        return json.loads(raw)
-    except Exception:
+    if not raw:
         return {}
+    text = str(raw).strip()
+    if text.startswith("{") or text.startswith("["):
+        return json.loads(text)
+    candidate = Path(text).expanduser()
+    if candidate.exists():
+        return json.loads(candidate.read_text())
+    raise ValueError(f"config-json is neither inline JSON nor an existing file: {text}")
 
 def ensure_output_dir(base_dir: str | None = None, prefix: str = "analysis") -> Path:
     return ensure_run_dir(base_dir, prefix)

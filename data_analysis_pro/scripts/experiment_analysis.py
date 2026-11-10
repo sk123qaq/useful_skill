@@ -11,7 +11,7 @@ from scipy import stats
 from statsmodels.stats.multitest import multipletests  # type: ignore
 from statsmodels.stats.power import NormalIndPower, TTestIndPower  # type: ignore
 
-from common import parse_json_arg
+from common import parse_json_arg, write_json
 from io_router import load_dataframe
 
 
@@ -615,6 +615,37 @@ def analyze_experiment(df, config: dict[str, Any]) -> dict[str, Any]:
     if covariates:
         report["balance_checks"] = analyze_balance(df, group_col, control, treatment, covariates, alpha)
 
+    report["srm_p_value"] = report["sample_ratio_mismatch"].get("p_value")
+    if covariates:
+        p_values = {
+            name: item.get("p_value")
+            for name, item in report["balance_checks"].items()
+            if isinstance(item, dict) and item.get("p_value") is not None
+        }
+        threshold = alpha / max(1, len(p_values))
+        failures = {name: p for name, p in p_values.items() if float(p) <= threshold}
+        marginal = {name: p for name, p in p_values.items() if float(p) <= alpha}
+        report["balance_test"] = {
+            "alpha": alpha,
+            "bonferroni_threshold": threshold,
+            "p_values": p_values,
+            "failures": failures,
+            "marginal": marginal,
+            "passed": not failures,
+        }
+        report["balance_passed"] = not failures
+    else:
+        report["balance_passed"] = None
+
+    primary_names = [m["name"] for m in normalized_metrics if m.get("role") == "primary"]
+    if primary_names:
+        primary_name = primary_names[0]
+        primary = report["metrics"].get(primary_name, {})
+        report["primary_metric"] = primary_name
+        report["effect"] = primary.get("absolute_lift")
+        report["p_value"] = primary.get("p_value")
+        report["primary_metrics"] = primary_names
+
     report["multiple_testing"] = apply_multiple_testing_correction(report, config)
     report["sequential_monitoring"] = apply_sequential_monitoring(report, config)
     report["power_analysis"] = apply_power_analysis(report, config)
@@ -626,12 +657,17 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Analyze a two-arm A/B experiment.")
     parser.add_argument("--input-path", required=True)
     parser.add_argument("--config-json", required=True)
+    parser.add_argument("--output-path", default=None)
     args = parser.parse_args()
 
     df = load_dataframe(args.input_path)
     config = parse_json_arg(args.config_json)
     report = analyze_experiment(df, config)
-    print(json.dumps(report, ensure_ascii=False, indent=2))
+    if args.output_path:
+        write_json(args.output_path, report)
+        print(json.dumps({"output_path": str(args.output_path)}, ensure_ascii=False))
+    else:
+        print(json.dumps(report, ensure_ascii=False, indent=2))
     return 0
 
 

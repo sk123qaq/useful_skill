@@ -2131,7 +2131,11 @@ def main() -> int:
     parser.add_argument("--config-json")
     args = parser.parse_args()
 
-    output_dir = ensure_output_dir(args.output_dir, prefix="causal-analysis") if args.output_dir else None
+    if args.output_dir:
+        output_dir = Path(args.output_dir).expanduser().resolve()
+        output_dir.mkdir(parents=True, exist_ok=True)
+    else:
+        output_dir = None
     config = parse_json_arg(args.config_json)
     df = load_dataframe(args.input_path)
     report = run_causal_analysis(df, task=args.task, config=config, output_dir=output_dir)

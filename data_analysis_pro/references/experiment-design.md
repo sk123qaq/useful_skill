@@ -4,9 +4,9 @@
 
 这份文档更适合作为 A/B 实验分析与汇报的设计指南。
 
-虽然 `data_analysis_pro` 中存在 `scripts/experiment_analysis.py`，而且我已修复其编译级 import 问题，并已用 BRFSS 样例数据做过一次端到端 smoke test，但这仍不等于它已经完成了系统化回归验证。
+`scripts/experiment_analysis.py` 负责两臂实验的 SRM、平衡性、效应、功效和多重检验；它不替代实验设计。结果写入 `experiment_report.json`，再由 gate 判定证据等级。
 
-当前不要假设存在统一实验 runner。
+不要用观察数据冒充随机实验；没有分流机制就回到因果分支。
 
 ## 实验开始前至少定义清楚
 
@@ -27,29 +27,22 @@
 - 统计显著性与效应量
 - 业务显著性，而不只是 p 值
 
-## 当前脚本的“意图支持范围”
+## 当前脚本已实现范围
 
-按 `experiment_analysis.py` 的实现意图，当前主要面向：
+`experiment_analysis.py` 当前已实现：
 
-- 双臂实验
-- 二值指标
-- 连续指标
-
-并计划支持：
-
-- 两样本比例 z 检验
-- Welch t 检验
-- 连续指标的可选 CUPED 修正
-- 基于卡方的 SRM 检测
-- 类别协变量平衡性检查
+- 双臂实验（非 0/1 组别也支持，需显式 `control`/`treatment`）
+- 二值指标（比例 z 检验）与连续指标（Welch t 检验）
+- SRM 卡方检验
+- 协变量平衡性（二值/连续/类别）
 - `bonferroni`、`holm`、`fdr_bh` 多重检验修正
 - `bonferroni`、`pocock`、`obrien_fleming` 序列监测
 - 二值/连续指标的功效与样本量估算
+- 主/护栏指标决策汇总
 
-但请注意：
+报告顶层字段：`srm_p_value`、`balance_passed`、`balance_test`、`primary_metric`、`effect`、`p_value`、`decision`。平衡性用 Bonferroni 阈值 `alpha/协变量数`；单个协变量 `p<alpha` 记 `marginal`，不单独阻断。
 
-- 这是脚本的目标能力范围
-- 不是“当前已经可直接稳定执行”的承诺
+已用公开数据 `causaldata.black_politicians` 实跑（5593 行，见 `references/worked-examples.md`）。
 
 ## 配置示例的正确用法
 

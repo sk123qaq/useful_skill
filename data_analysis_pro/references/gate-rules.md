@@ -1,108 +1,94 @@
-# 准入规则
+# Gate Rules
 
-## 当前定位
+`gate_evaluator.py --run-dir <run>` 读取固定工件，输出 `gate_review.json`。它不读 Agent 的口头解释。
 
-这份文档描述的是“结论强度如何降级或放行”，不是强制执行的 pipeline。
+## 输入
 
-`data_analysis_pro` 当前没有统一的 modeling runner 来稳定生成一整套 gate 输入工件，所以这里更适合被理解为：
+| 工件 | 必需分支 |
+|---|---|
+| `analysis_contract.json` | 全部 |
+| `profile.json` | 全部 |
+| `cleaning_report.json` | 全部（可缺省但会 warning） |
+| `feature_risk_report.json` | predictive / causal / experiment |
+| `split_plan.json` | predictive / causal（有时间列时） |
+| `baseline_results.json` | predictive |
+| `causal_design.json` + `causal_report.json` | causal |
+| `experiment_report.json` | experiment |
+| `claim_registry.json` | 交付前 |
+| `report_lint.json` | 交付前 |
 
-- `gate_evaluator.py` 的真实判断逻辑摘要
-- 以及在没有完整工件时也能手工套用的最小判断框架
+## 九道 gate
 
-## 什么时候需要看准入规则
+### 1. contract
 
-优先用于预测性分析或任何要写出“模型已具备汇报价值”结论的场景。
+- 缺文件 / 缺 `decision_question`、`task`、`unit_of_analysis`、`success_criteria`、`stop_conditions` → fail。
+- `task` 不在允许集合 → fail。
 
-如果只是描述性分析、探索性 EDA、初步关系筛查，这份规则通常只需要拿来约束措辞，不需要机械执行。
+### 2. data_quality
 
-## 1. 基线准入 (Baseline Check)
+- `row_count < 30` → fail。
+- target 缺失率 >0.50 → fail。
+- cleaning 后 0 行 → fail。
 
-目的：防止模型不如最简单的基线。
+### 3. feature_risk
 
-当前 `gate_evaluator.py` 的阈值：
-- **分类任务**：最优模型主指标必须比最优 Dummy 高至少 `0.02`。
-- **回归任务**：误差指标（如 RMSE）必须比 Dummy 低至少 `5%`。
+- 预测/因果/实验缺 `feature_risk_report.json` → fail。
+- 任一 `used=true` 且 `label=hard_leakage` 或 `post_outcome` → fail。
+- 任一 `confirmed=false` → fail（Agent 必须逐列确认）。
+- `collection_artifact` 且 `used=true` → fail；标 `used=false` 可过。
 
----
+### 4. split
 
-## 2. 稳定性准入 (Stability Check)
+- 预测/因果缺 `split_plan.json` → fail。
+- 索引越界/重叠/测试折重叠 → fail。
+- 时间列存在但 strategy=`kfold` → fail。
+- 时间策略训练时间 ≥ 测试时间 → fail。
 
-目的：防止由于样本切分导致的偶然性结论。
+### 5. baseline
 
-当前 `gate_evaluator.py` 的硬性阈值：
-- **默认阈值**：**20%** 的性能差异。
-- **计算逻辑**：交叉验证的主指标变异系数（CV/Mean）不得超过 0.2。
-- **处理方式**：超过此阈值，结论强度自动降级为 `exploratory`。
+- 预测分支缺 `baseline_results.json` → fail。
+- 没有非 dummy 模型 → fail。
+- 非 dummy 不赢 dummy（分类 <+0.02，回归 <5%）→ exploratory。
+- CV std/mean >0.2 → exploratory。
+- `exploratory` 可以交付，但报告不能写“可靠预测”。
 
----
+### 6. causal
 
-## 3. 业务直觉准入 (Intuition Check)
+- 缺 design/report → exploratory。
+- design 缺 estimand/treatment/outcome/identification_assumptions → exploratory。
+- 识别假设不成立（由 Agent 在 design 里写）→ 应走 `stop_and_report`，不要硬估。
 
-目的：验证特征影响方向是否符合业务常识。
+### 7. experiment
 
-当前 `gate_evaluator.py` 的校验逻辑：
-- **expected_signs**：在配置中定义的预期符号（如：`{"price": "-"}` 表示价格与销量负相关）。
-- **校验方式**：脚本对比模型解释产出的特征方向（SHAP 或 Coefficient）与预期。
-- **处理方式**：若核心特征方向与预期背离且无法给出原理解释，结论应降级。
+- 缺 report → exploratory。
+- SRM p≤0.001 → fail。
+- 平衡性失败 → fail。脚本按 Bonferroni 阈值 `alpha/协变量数` 判 fail；单个协变量 `p<alpha` 只记 `marginal`，不单独阻断。
+- 多重检验未校正 → warning；主效应解释要降级。
 
----
+### 8. claims
 
-## 4. 特征风险准入 (Leakage Check)
+- claim 的 `supported_by` 路径不存在 → warning（最终由 report_lint 判 fail）。
+- 等级不在 `report-ready/exploratory/not_usable` → warning。
+- 没有 claim → 不阻塞 gate，但 `report_bundle` 会拒绝空 claim。
 
+### 9. report
 
-目的：
+- `report_lint.json` 存在且 passed → pass。
+- 不存在 → not_applicable；交付前必须补。
 
-- 防止结论建立在泄露变量或结果后变量上。
+## 等级
 
-当前 `gate_evaluator.py` 的真实阻断条件：
+| 等级 | 含义 | 允许措辞 |
+|---|---|---|
+| `report-ready` | 所有硬 gate 通过，claim 有证据 | “结果表明……” |
+| `exploratory` | 有结果，但基线/稳定性/因果假设/claim 有缺口 | “初步提示……，需进一步验证” |
+| `not_usable` | 数据/契约/泄漏/切分/基线缺失 | “当前数据不足以支持该结论” |
 
-- `feature_risk_report.summary.label_counts` 中存在 `hard_leakage`
-- 或解释结果中的高排名特征带有：
-  - `hard_leakage`
-  - `post_outcome`
+空 run dir 必须是 `not_usable`。任何“没有输入却 report-ready”的实现都是 bug。
 
-怎么理解：
+## 修复顺序
 
-- 这不是“变量可疑”就一票否决。
-- 真正阻断的是强泄露，尤其是会把目标答案直接带进特征里的字段。
-
-如果没有稳定的 `feature_risk_report`：
-
-- 就手工检查 Top 特征是否包含结果后字段、标签衍生字段、人工回填结果字段。
-- 只要这个问题无法排除，就不要给强结论。
-
-## 4. 报告准入
-
-当前 `gate_evaluator.py` 的总体逻辑：
-
-- 三个上游 gate 都通过：
-  - `report-ready`
-- 未通过全部 gate，但没有明确硬泄露：
-  - `exploratory`
-- 出现硬泄露或 route 已经要求 stop：
-  - `not_usable`
-
-这三个等级的含义：
-
-- `report-ready`
-  - 可以写出较明确的模型结论，但仍要写限制条件
-- `exploratory`
-  - 可以写“观察到信号/值得继续验证”，不能写成已证实
-- `not_usable`
-  - 只能报告问题、风险和下一步，不应输出可执行业务判断
-
-## 最小手工版判断顺序
-
-即使不调用 `gate_evaluator.py`，也建议按这个顺序过一遍：
-
-1. 最优非 dummy 是否明显优于 dummy
-2. 交叉验证波动是否足够小
-3. Top 特征里是否存在泄露或结果后字段
-4. 最终结论是否和当前证据等级匹配
-
-## 防护准则
-
-- 准入规则控制的是“话能说多重”，不是“分析是否值得做”。
-- 没过 gate，不代表没有业务价值；常见正确做法是降级成探索性结论。
-- 不要为了通过 gate 而事后调指标、换口径、挑切分。
-- 不要因为 reference 里有 gate，就假设当前 skill 已经形成完整治理流水线。
+1. 先修 blocker（契约、数据、泄漏、切分、baseline）。
+2. 再补 claim 证据。
+3. 最后跑 report_lint。
+4. 修不了就降级，不要改 gate 结果。

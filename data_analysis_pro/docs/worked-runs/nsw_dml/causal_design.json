@@ -1,0 +1,27 @@
+{
+  "version": 1,
+  "estimand": "ATE",
+  "treatment": "treat",
+  "outcome": "re78",
+  "design": "dml",
+  "identification_assumptions": [
+    "conditional exchangeability given pre-treatment covariates",
+    "overlap",
+    "correct nuisance models"
+  ],
+  "adjustment_set": [
+    "age",
+    "educ",
+    "black",
+    "hisp",
+    "marr",
+    "nodegree",
+    "re74",
+    "re75"
+  ],
+  "instrument": null,
+  "sensitivity_checks": [
+    "cross-fitting"
+  ],
+  "created_at": "2026-11-10T04:15:37+00:00"
+}

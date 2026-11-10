@@ -95,18 +95,30 @@ def build_column_profile(df: pd.DataFrame, target: str | None = None, top_n: int
         "high_missingness": [p["column"] for p in profiles if "high_missingness" in p["flags"]],
         "high_cardinality": [p["column"] for p in profiles if "high_cardinality" in p["flags"]],
     }
-    return {"row_count": row_count, "profiles": profiles, "summary": summary}
+    return {"row_count": row_count, "column_count": len(df.columns), "profiles": profiles, "summary": summary}
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--input-path", required=True)
     parser.add_argument("--output-path")
     parser.add_argument("--target")
+    parser.add_argument("--sheet", default=None)
+    parser.add_argument("--comment", default=None)
+    parser.add_argument("--skiprows", type=int, default=None)
+    parser.add_argument("--encoding", default=None)
+    parser.add_argument("--sample-rows", type=int, default=None)
     args = parser.parse_args()
 
-    df = io_router.load_dataframe(args.input_path)
+    df = io_router.load_dataframe(
+        args.input_path, sample_rows=args.sample_rows, auto_sample=False,
+        sheet=args.sheet, comment=args.comment, skiprows=args.skiprows, encoding=args.encoding,
+    )
+    if args.target and args.target not in df.columns:
+        raise SystemExit(f"target not found in data: {args.target}")
     profile = build_column_profile(df, target=args.target)
-    
+    profile["source"] = str(Path(args.input_path).resolve())
+    profile["created_at"] = common.now_utc_iso()
+
     if args.output_path:
         common.write_json(args.output_path, profile)
     else:

@@ -1,0 +1,10 @@
+__pycache__/
+*.pyc
+tests/fixture/
+tests/tmp/
+
+# 脚本默认输出目录（verify.py 抽帧等），别进仓库
+out/
+
+# 备份文件不入库
+*.bak

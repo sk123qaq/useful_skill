@@ -1,7 +1,11 @@
+#!/usr/bin/env python3
+"""baseline_runner.py: CLI-first baseline ladder with leakage-safe splits."""
 from __future__ import annotations
 
-import inspect
-import math
+import argparse
+import sys
+import warnings
+from pathlib import Path
 from typing import Any
 
 import numpy as np
@@ -9,476 +13,289 @@ import pandas as pd
 from sklearn.compose import ColumnTransformer
 from sklearn.impute import SimpleImputer
 from sklearn.metrics import (
-    accuracy_score,
-    average_precision_score,
-    balanced_accuracy_score,
-    brier_score_loss,
-    f1_score,
-    mean_absolute_error,
-    mean_squared_error,
-    precision_score,
-    r2_score,
-    recall_score,
-    roc_auc_score,
+    accuracy_score, f1_score, log_loss, mean_absolute_error, mean_squared_error,
+    r2_score, roc_auc_score,
 )
 from sklearn.model_selection import KFold, StratifiedKFold
 from sklearn.pipeline import Pipeline
-from sklearn.preprocessing import OneHotEncoder
+from sklearn.preprocessing import OneHotEncoder, StandardScaler
 
-from common import write_artifact
-from model_catalog import ModelSpec, get_model_catalog
-from schemas import validate_baseline_results
+sys.path.append(str(Path(__file__).parent))
+import common  # noqa: E402
+import io_router  # noqa: E402
+from model_catalog import get_model_catalog, get_model_spec  # noqa: E402
+from split_plan import create_plan, validate_plan  # noqa: E402
+from workflow import file_sha256, load_json, write_json  # noqa: E402
+
+warnings.filterwarnings("ignore", category=UserWarning)
 
 
-def _make_one_hot_encoder() -> OneHotEncoder:
+def _num(value: Any) -> float | None:
     try:
-        return OneHotEncoder(handle_unknown="ignore", sparse_output=False)
-    except TypeError:
-        return OneHotEncoder(handle_unknown="ignore", sparse=False)
+        out = float(value)
+        return out if np.isfinite(out) else None
+    except (TypeError, ValueError):
+        return None
 
 
-def _build_preprocessor(features: pd.DataFrame) -> ColumnTransformer:
-    numeric_columns = features.select_dtypes(include=["number", "bool"]).columns.tolist()
-    categorical_columns = [column for column in features.columns if column not in numeric_columns]
-    numeric_pipeline = Pipeline([("imputer", SimpleImputer(strategy="median"))])
-    categorical_pipeline = Pipeline(
-        [
+def _features(df: pd.DataFrame, target: str, time_col: str | None, group_col: str | None) -> tuple[list[str], list[str]]:
+    excluded = {target, time_col, group_col}
+    numeric, categorical = [], []
+    for col in df.columns:
+        if col in excluded or pd.api.types.is_datetime64_any_dtype(df[col]):
+            continue
+        if pd.api.types.is_numeric_dtype(df[col]) or pd.api.types.is_bool_dtype(df[col]):
+            numeric.append(str(col))
+        else:
+            categorical.append(str(col))
+    return numeric, categorical
+
+
+def _preprocessor(numeric: list[str], categorical: list[str]) -> ColumnTransformer:
+    transformers = []
+    if numeric:
+        transformers.append(("num", Pipeline([
+            ("imputer", SimpleImputer(strategy="median")),
+            ("scaler", StandardScaler()),
+        ]), numeric))
+    if categorical:
+        transformers.append(("cat", Pipeline([
             ("imputer", SimpleImputer(strategy="most_frequent")),
-            ("encoder", _make_one_hot_encoder()),
-        ]
-    )
-    return ColumnTransformer(
-        transformers=[
-            ("numeric", numeric_pipeline, numeric_columns),
-            ("categorical", categorical_pipeline, categorical_columns),
-        ]
-    )
+            ("onehot", OneHotEncoder(handle_unknown="ignore", sparse_output=False)),
+        ]), categorical))
+    return ColumnTransformer(transformers=transformers, remainder="drop")
 
 
-def _classification_cv(y: pd.Series, n_splits: int) -> StratifiedKFold:
-    min_class_count = int(y.value_counts().min())
-    effective_splits = max(2, min(n_splits, min_class_count))
-    return StratifiedKFold(n_splits=effective_splits, shuffle=True, random_state=42)
+def _metric_set(task: str, y_true: pd.Series, y_pred: np.ndarray, proba: np.ndarray | None) -> dict[str, float | None]:
+    out: dict[str, float | None] = {}
+    if task == "regression":
+        out["rmse"] = _num(np.sqrt(mean_squared_error(y_true, y_pred)))
+        out["mae"] = _num(mean_absolute_error(y_true, y_pred))
+        out["r2"] = _num(r2_score(y_true, y_pred))
+        return out
+    out["accuracy"] = _num(accuracy_score(y_true, y_pred))
+    out["f1_macro"] = _num(f1_score(y_true, y_pred, average="macro", zero_division=0))
+    if proba is not None:
+        try:
+            out["log_loss"] = _num(log_loss(y_true, proba, labels=list(np.unique(y_true))))
+        except Exception:
+            out["log_loss"] = None
+        if len(np.unique(y_true)) == 2:
+            try:
+                out["roc_auc"] = _num(roc_auc_score(y_true, proba[:, 1]))
+            except Exception:
+                out["roc_auc"] = None
+    return out
 
 
-def _regression_cv(length: int, n_splits: int) -> KFold:
-    effective_splits = max(2, min(n_splits, length))
-    return KFold(n_splits=effective_splits, shuffle=True, random_state=42)
+def _fit_one(spec, X_train, y_train, X_test, numeric, categorical):
+    model = spec.builder()
+    pipe = Pipeline([("prep", _preprocessor(numeric, categorical)), ("model", model)])
+    pipe.fit(X_train, y_train)
+    pred = pipe.predict(X_test)
+    proba = None
+    if hasattr(pipe, "predict_proba"):
+        try:
+            proba = pipe.predict_proba(X_test)
+        except Exception:
+            proba = None
+    return pred, proba
 
 
-def _classification_split_strategy(y: pd.Series, sample_weight: pd.Series | None = None) -> str:
-    return "weighted_stratified_greedy" if sample_weight is not None else "stratified_kfold"
+def _summarize(fold_metrics: list[dict[str, Any]], metric_names: list[str]) -> tuple[dict[str, Any], dict[str, Any]]:
+    mean, std = {}, {}
+    for name in metric_names:
+        values = [row[name] for row in fold_metrics if row.get(name) is not None]
+        mean[name] = _num(np.mean(values)) if values else None
+        std[name] = _num(np.std(values)) if values else None
+    return mean, std
 
 
-def _regression_split_strategy(sample_weight: pd.Series | None = None) -> str:
-    return "weighted_kfold_greedy" if sample_weight is not None else "kfold"
+def _default_metric(task: str, requested: str | None) -> tuple[str, str]:
+    if requested:
+        return requested, "lower" if requested in {"rmse", "mae", "log_loss"} else "higher"
+    return ("rmse", "lower") if task == "regression" else ("f1_macro", "higher")
 
 
-def _ordered_labels(y: pd.Series) -> list[Any]:
-    labels = list(pd.Series(y).dropna().unique())
-    return sorted(labels, key=lambda value: str(value))
-
-
-def _effective_classification_splits(y: pd.Series, n_splits: int) -> int:
-    min_class_count = int(y.value_counts().min())
-    return max(2, min(n_splits, min_class_count))
-
-
-def _folds_from_test_indices(test_indices_by_fold: list[list[int]], length: int) -> list[tuple[np.ndarray, np.ndarray]]:
-    all_indices = np.arange(length)
-    folds: list[tuple[np.ndarray, np.ndarray]] = []
-    for test_indices in test_indices_by_fold:
-        test_index = np.array(sorted(test_indices), dtype=int)
-        train_mask = np.ones(length, dtype=bool)
-        train_mask[test_index] = False
-        folds.append((all_indices[train_mask], test_index))
-    return folds
-
-
-def _weighted_classification_splits(
-    y: pd.Series,
-    sample_weight: pd.Series,
-    n_splits: int,
-) -> list[tuple[np.ndarray, np.ndarray]]:
-    effective_splits = _effective_classification_splits(y, n_splits)
-    weights = pd.Series(sample_weight, index=y.index).fillna(0.0).astype(float)
-    test_indices_by_fold: list[list[int]] = [[] for _ in range(effective_splits)]
-    total_weight_by_fold = [0.0] * effective_splits
-    row_count_by_fold = [0] * effective_splits
-    class_weight_by_fold = {
-        label: [0.0] * effective_splits
-        for label in _ordered_labels(y)
-    }
-    for label in _ordered_labels(y):
-        class_positions = [position for position, value in enumerate(y.tolist()) if value == label]
-        class_positions.sort(key=lambda position: (-weights.iloc[position], position))
-        for position in class_positions:
-            best_fold = min(
-                range(effective_splits),
-                key=lambda fold: (
-                    class_weight_by_fold[label][fold],
-                    total_weight_by_fold[fold],
-                    row_count_by_fold[fold],
-                    fold,
-                ),
-            )
-            test_indices_by_fold[best_fold].append(position)
-            class_weight_by_fold[label][best_fold] += float(weights.iloc[position])
-            total_weight_by_fold[best_fold] += float(weights.iloc[position])
-            row_count_by_fold[best_fold] += 1
-    return _folds_from_test_indices(test_indices_by_fold, len(y))
-
-
-def _weighted_regression_splits(
-    length: int,
-    sample_weight: pd.Series,
-    n_splits: int,
-) -> list[tuple[np.ndarray, np.ndarray]]:
-    effective_splits = max(2, min(n_splits, length))
-    weights = pd.Series(sample_weight).fillna(0.0).astype(float).reset_index(drop=True)
-    test_indices_by_fold: list[list[int]] = [[] for _ in range(effective_splits)]
-    total_weight_by_fold = [0.0] * effective_splits
-    row_count_by_fold = [0] * effective_splits
-    ordered_positions = list(range(length))
-    ordered_positions.sort(key=lambda position: (-weights.iloc[position], position))
-    for position in ordered_positions:
-        best_fold = min(
-            range(effective_splits),
-            key=lambda fold: (
-                total_weight_by_fold[fold],
-                row_count_by_fold[fold],
-                fold,
-            ),
-        )
-        test_indices_by_fold[best_fold].append(position)
-        total_weight_by_fold[best_fold] += float(weights.iloc[position])
-        row_count_by_fold[best_fold] += 1
-    return _folds_from_test_indices(test_indices_by_fold, length)
-
-
-def _classification_splits(
-    y: pd.Series,
-    n_splits: int,
-    sample_weight: pd.Series | None = None,
-) -> list[tuple[np.ndarray, np.ndarray]]:
-    if sample_weight is None:
-        splitter = _classification_cv(y, n_splits)
-        return list(splitter.split(np.zeros(len(y)), y))
-    return _weighted_classification_splits(y, sample_weight, n_splits)
-
-
-def _regression_splits(
-    length: int,
-    n_splits: int,
-    sample_weight: pd.Series | None = None,
-) -> list[tuple[np.ndarray, np.ndarray]]:
-    if sample_weight is None:
-        splitter = _regression_cv(length, n_splits)
-        return list(splitter.split(np.zeros(length)))
-    return _weighted_regression_splits(length, sample_weight, n_splits)
-
-
-def _positive_label(y_true: pd.Series) -> Any:
-    classes = list(pd.Series(y_true).dropna().unique())
-    if 1 in classes:
-        return 1
-    return sorted(classes)[-1]
-
-
-def _classification_scores(pipeline: Pipeline, x_test: pd.DataFrame) -> pd.Series | None:
-    if hasattr(pipeline, "predict_proba"):
-        probabilities = pipeline.predict_proba(x_test)
-        classes = list(pipeline.classes_)
-        positive_label = 1 if 1 in classes else classes[-1]
-        positive_index = classes.index(positive_label)
-        return pd.Series(probabilities[:, positive_index], index=x_test.index)
-    if hasattr(pipeline, "decision_function"):
-        scores = pipeline.decision_function(x_test)
-        return pd.Series(scores, index=x_test.index)
-    return None
-
-
-def _classification_metrics(
-    y_true: pd.Series,
-    y_pred: pd.Series,
-    y_score: pd.Series | None = None,
-    sample_weight: pd.Series | None = None,
-) -> dict[str, float]:
-    positive_label = _positive_label(y_true)
-    metrics = {
-        "accuracy": float(accuracy_score(y_true, y_pred, sample_weight=sample_weight)),
-        "balanced_accuracy": float(balanced_accuracy_score(y_true, y_pred, sample_weight=sample_weight)),
-        "f1_macro": float(f1_score(y_true, y_pred, average="macro", sample_weight=sample_weight)),
-        "precision_pos": float(
-            precision_score(y_true, y_pred, pos_label=positive_label, zero_division=0, sample_weight=sample_weight)
-        ),
-        "recall_pos": float(
-            recall_score(y_true, y_pred, pos_label=positive_label, zero_division=0, sample_weight=sample_weight)
-        ),
-    }
-    if y_score is not None and pd.Series(y_true).nunique(dropna=True) == 2:
-        metrics["roc_auc"] = float(roc_auc_score(y_true, y_score, sample_weight=sample_weight))
-        metrics["average_precision"] = float(
-            average_precision_score(y_true, y_score, pos_label=positive_label, sample_weight=sample_weight)
-        )
-        if ((y_score >= 0) & (y_score <= 1)).all():
-            metrics["brier_loss"] = float(
-                brier_score_loss(y_true, y_score, pos_label=positive_label, sample_weight=sample_weight)
-            )
-    return metrics
-
-
-def _regression_metrics(
-    y_true: pd.Series,
-    y_pred: pd.Series,
-    sample_weight: pd.Series | None = None,
-) -> dict[str, float]:
-    mse = float(mean_squared_error(y_true, y_pred, sample_weight=sample_weight))
-    return {
-        "rmse": math.sqrt(mse),
-        "mae": float(mean_absolute_error(y_true, y_pred, sample_weight=sample_weight)),
-        "r2": float(r2_score(y_true, y_pred, sample_weight=sample_weight)),
-    }
-
-
-def _summarize_fold_metrics(fold_metrics: list[dict[str, float]]) -> tuple[dict[str, float], dict[str, float]]:
-    metric_names = fold_metrics[0].keys()
-    mean_metrics = {}
-    std_metrics = {}
-    for metric in metric_names:
-        values = [fold[metric] for fold in fold_metrics]
-        mean_metrics[metric] = float(sum(values) / len(values))
-        variance = sum((value - mean_metrics[metric]) ** 2 for value in values) / len(values)
-        std_metrics[metric] = float(math.sqrt(variance))
-    return mean_metrics, std_metrics
-
-
-def _estimator_supports_sample_weight(estimator: object) -> bool:
-    signature = inspect.signature(estimator.fit)
-    return "sample_weight" in signature.parameters
-
-
-def _fit_pipeline(
-    pipeline: Pipeline,
-    x_train: pd.DataFrame,
-    y_train: pd.Series,
-    estimator: object,
-    sample_weight: pd.Series | None = None,
-) -> None:
-    if sample_weight is not None and _estimator_supports_sample_weight(estimator):
-        pipeline.fit(x_train, y_train, model__sample_weight=sample_weight.to_numpy())
-        return
-    pipeline.fit(x_train, y_train)
-
-
-def _evaluate_model(
-    spec: ModelSpec,
-    features: pd.DataFrame,
-    target: pd.Series,
-    task_type: str,
-    n_splits: int,
-    sample_weight: pd.Series | None = None,
-    heartbeat=None,
-) -> dict[str, Any]:
-    preprocessor = _build_preprocessor(features)
-    estimator = spec.builder()
-    pipeline = Pipeline([("preprocessor", preprocessor), ("model", estimator)])
-    split_strategy = (
-        _classification_split_strategy(target, sample_weight)
-        if task_type == "classification"
-        else _regression_split_strategy(sample_weight)
-    )
-    splits = (
-        _classification_splits(target, n_splits, sample_weight=sample_weight)
-        if task_type == "classification"
-        else _regression_splits(len(features), n_splits, sample_weight=sample_weight)
-    )
-    fold_metrics: list[dict[str, float]] = []
-    for fold_index, (train_index, test_index) in enumerate(splits, start=1):
-        if heartbeat:
-            heartbeat(f"evaluating {spec.name} fold {fold_index}")
-        x_train = features.iloc[train_index]
-        x_test = features.iloc[test_index]
-        y_train = target.iloc[train_index]
-        y_test = target.iloc[test_index]
-        train_weight = sample_weight.iloc[train_index] if sample_weight is not None else None
-        test_weight = sample_weight.iloc[test_index] if sample_weight is not None else None
-        _fit_pipeline(pipeline, x_train, y_train, estimator, train_weight)
-        predictions = pipeline.predict(x_test)
-        scores = _classification_scores(pipeline, x_test) if task_type == "classification" else None
-        metrics = (
-            _classification_metrics(y_test, predictions, scores, sample_weight=test_weight)
-            if task_type == "classification"
-            else _regression_metrics(y_test, predictions, sample_weight=test_weight)
-        )
-        fold_metrics.append({"fold": fold_index, **metrics})
-    mean_metrics, std_metrics = _summarize_fold_metrics(
-        [{key: value for key, value in fold.items() if key != "fold"} for fold in fold_metrics]
-    )
-    return {
-        "model_name": spec.name,
-        "level": spec.level,
-        "family": spec.family,
-        "split_strategy": split_strategy,
-        "fold_metrics": fold_metrics,
-        "mean_metrics": mean_metrics,
-        "std_metrics": std_metrics,
-    }
-
-
-def metric_direction(metric_name: str) -> str:
-    return "min" if metric_name in {"rmse", "mae", "mse", "brier_loss"} else "max"
-
-
-def _primary_metric(task_type: str) -> tuple[str, str]:
-    metric_name = "accuracy" if task_type == "classification" else "rmse"
-    return metric_name, metric_direction(metric_name)
-
-
-def _best_model(models: list[dict[str, Any]], metric_name: str, direction: str, family: str | None = None) -> dict[str, Any]:
-    candidates = [model for model in models if family is None or model["family"] == family]
-    reverse = direction == "max"
-    return sorted(candidates, key=lambda model: model["mean_metrics"][metric_name], reverse=reverse)[0]
-
-
-def run_model_ladder(
+def run_baseline(
     df: pd.DataFrame,
     target: str,
     task: str,
-    weight_col: str | None = None,
-    model_specs: list[ModelSpec] | None = None,
-    output_dir: str | None = None,
+    *,
     time_col: str | None = None,
-    n_splits: int = 5,
-    max_level: int | None = None,
+    group_col: str | None = None,
+    split_plan: dict[str, Any] | None = None,
+    model_names: list[str] | None = None,
+    max_level: int = 2,
     primary_metric: str | None = None,
-    artifact_name: str = "baseline_results",
-    heartbeat=None,
+    n_splits: int = 5,
+    test_size: float = 0.3,
+    gap: int = 0,
+    seed: int = 42,
 ) -> dict[str, Any]:
-    del time_col
-    task_type = task
-    if task_type not in {"classification", "regression"}:
-        raise ValueError(f"Unsupported task for baseline ladder: {task}")
-    feature_drop_columns = [target] + ([weight_col] if weight_col else [])
-    features = df.drop(columns=feature_drop_columns)
-    target_series = df[target]
-    sample_weight = df[weight_col] if weight_col else None
-    models: list[dict[str, Any]] = []
-    specs = model_specs or get_model_catalog(task_type)
+    if task not in {"classification", "regression"}:
+        raise ValueError("task must be classification or regression")
+    if target not in df.columns:
+        raise ValueError(f"target not found: {target}")
+    frame = df.dropna(subset=[target]).reset_index(drop=True)
+    if len(frame) < 20:
+        raise ValueError("need at least 20 rows with non-missing target")
+    numeric, categorical = _features(frame, target, time_col, group_col)
+    if not numeric and not categorical:
+        raise ValueError("no usable features after excluding target/time/group")
+    if model_names:
+        specs = [get_model_spec(task, name, include_tuning=True) for name in model_names]
+    else:
+        specs = [spec for spec in get_model_catalog(task) if spec.level <= max_level]
+    if split_plan is None:
+        strategy = "temporal" if time_col and time_col in frame.columns else "kfold"
+        split_plan = create_plan(frame, target, time_col, strategy, n_splits, test_size, group_col, gap, seed)
+    errors = validate_plan(split_plan, frame)
+    if errors:
+        raise ValueError("invalid split plan: " + "; ".join(errors))
+
+    metric_name, direction = _default_metric(task, primary_metric)
+    model_results = []
     for spec in specs:
-        if max_level is not None and spec.level > max_level:
-            continue
-        if heartbeat:
-            heartbeat(f"starting {spec.name}")
-        models.append(
-            _evaluate_model(
-                spec,
-                features,
-                target_series,
-                task_type,
-                n_splits=n_splits,
-                sample_weight=sample_weight,
-                heartbeat=heartbeat,
-            )
-        )
-    default_metric_name, default_direction = _primary_metric(task_type)
-    metric_name = primary_metric or default_metric_name
-    direction = metric_direction(metric_name) if primary_metric else default_direction
-    best_model = _best_model(models, metric_name, direction)
-    best_dummy = _best_model(models, metric_name, direction, family="dummy")
-    results = {
-        "task_type": task_type,
+        fold_metrics, fold_errors = [], []
+        for fold in split_plan["folds"]:
+            train_idx = [i for i in fold["train_indices"] if i < len(frame)]
+            test_idx = [i for i in fold["test_indices"] if i < len(frame)]
+            if not train_idx or not test_idx:
+                continue
+            train = frame.iloc[train_idx]
+            test = frame.iloc[test_idx]
+            if task == "classification" and train[target].nunique() < 2:
+                fold_errors.append(f"fold {fold['fold']}: train has one class")
+                continue
+            try:
+                pred, proba = _fit_one(spec, train[numeric + categorical], train[target],
+                                       test[numeric + categorical], numeric, categorical)
+                metrics = _metric_set(task, test[target], pred, proba)
+                metrics["fold"] = int(fold["fold"])
+                metrics["n_train"] = len(train)
+                metrics["n_test"] = len(test)
+                fold_metrics.append(metrics)
+            except Exception as exc:
+                fold_errors.append(f"fold {fold['fold']}: {type(exc).__name__}: {exc}")
+        mean, std = _summarize(fold_metrics, [metric_name] + (["rmse", "mae", "r2"] if task == "regression" else ["accuracy", "f1_macro", "log_loss", "roc_auc"]))
+        model_results.append({
+            "model_name": spec.name,
+            "level": spec.level,
+            "family": spec.family,
+            "fold_metrics": fold_metrics,
+            "mean_metrics": mean,
+            "std_metrics": std,
+            "errors": fold_errors,
+        })
+
+    valid = [m for m in model_results if m["mean_metrics"].get(metric_name) is not None]
+    if not valid:
+        raise ValueError("every model failed or produced no metric")
+    reverse = direction == "higher"
+    valid.sort(key=lambda m: m["mean_metrics"][metric_name], reverse=reverse)
+    best = valid[0]
+    dummies = [m for m in valid if m["family"] == "dummy"]
+    non_dummies = [m for m in valid if m["family"] != "dummy"]
+    best_dummy = dummies[0] if dummies else (min(valid, key=lambda m: m["level"]) if valid else None)
+    best_non_dummy = non_dummies[0] if non_dummies else None
+
+    comparison = {"metric": metric_name, "direction": direction, "threshold": None, "beats_dummy": False,
+                  "delta": None, "relative": None}
+    if best_dummy and best_non_dummy:
+        dummy_value = best_dummy["mean_metrics"][metric_name]
+        model_value = best_non_dummy["mean_metrics"][metric_name]
+        if dummy_value is not None and model_value is not None:
+            delta = (model_value - dummy_value) if reverse else (dummy_value - model_value)
+            relative = delta / abs(dummy_value) if dummy_value not in (0, None) else None
+            threshold = 0.02 if task == "classification" else 0.05
+            comparison.update({
+                "dummy_model": best_dummy["model_name"],
+                "best_non_dummy": best_non_dummy["model_name"],
+                "dummy_value": _num(dummy_value),
+                "model_value": _num(model_value),
+                "delta": _num(delta),
+                "relative": _num(relative),
+                "threshold": threshold,
+                "beats_dummy": bool(relative is not None and relative >= threshold),
+            })
+
+    stability = {"metric": metric_name, "std": best["std_metrics"].get(metric_name),
+                 "mean": best["mean_metrics"].get(metric_name), "ratio": None, "stable": None}
+    if stability["std"] is not None and stability["mean"] not in (None, 0):
+        ratio = abs(stability["std"] / stability["mean"])
+        stability["ratio"] = _num(ratio)
+        stability["stable"] = bool(ratio <= 0.2)
+
+    return {
+        "stage": "baseline",
+        "task_type": task,
         "target": target,
-        "weight_col": weight_col,
-        "split_strategy": (
-            _classification_split_strategy(target_series, sample_weight)
-            if task_type == "classification"
-            else _regression_split_strategy(sample_weight)
-        ),
-        "model_order": [model["model_name"] for model in models],
-        "models": models,
+        "time_col": time_col,
+        "group_col": group_col,
+        "n_rows": int(len(frame)),
+        "features": {"numeric": numeric, "categorical": categorical},
         "primary_metric": metric_name,
         "primary_metric_direction": direction,
-        "best_model_name": best_model["model_name"],
-        "best_dummy_name": best_dummy["model_name"],
+        "split_strategy": split_plan.get("strategy"),
+        "split_plan": split_plan,
+        "models": model_results,
+        "best_model_name": best["model_name"],
+        "best_dummy_name": best_dummy["model_name"] if best_dummy else None,
+        "dummy_comparison": comparison,
+        "stability": stability,
+        "warnings": [],
+        "created_at": common.now_utc_iso(),
     }
-    validate_baseline_results(results)
-    if output_dir:
-        write_artifact(output_dir, artifact_name, results)
-    return results
 
 
-def run_baseline_ladder(
-    df: pd.DataFrame,
-    target: str,
-    task: str,
-    weight_col: str | None = None,
-    output_dir: str | None = None,
-    time_col: str | None = None,
-    n_splits: int = 5,
-    max_level: int | None = None,
-) -> dict[str, Any]:
-    return run_model_ladder(
-        df,
-        target=target,
-        task=task,
-        weight_col=weight_col,
-        model_specs=get_model_catalog(task),
-        output_dir=output_dir,
-        time_col=time_col,
-        n_splits=n_splits,
-        max_level=max_level,
-        primary_metric=None,
-        artifact_name="baseline_results",
+def run_model_ladder(df: pd.DataFrame, target: str, task: str, **kwargs) -> dict[str, Any]:
+    """Compatibility wrapper for the old Python helper."""
+    return run_baseline(df, target, task, **kwargs)
+
+
+def run_baseline_ladder(df: pd.DataFrame, target: str, task: str, **kwargs) -> dict[str, Any]:
+    return run_baseline(df, target, task, **kwargs)
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="Fit baseline models on explicit folds.")
+    parser.add_argument("--input-path", required=True)
+    parser.add_argument("--output-path", required=True)
+    parser.add_argument("--target", required=True)
+    parser.add_argument("--task", required=True, choices=["classification", "regression"])
+    parser.add_argument("--time-col", default=None)
+    parser.add_argument("--group-col", default=None)
+    parser.add_argument("--split-plan", default=None)
+    parser.add_argument("--models", default=None, help="comma-separated model names")
+    parser.add_argument("--max-level", type=int, default=2)
+    parser.add_argument("--primary-metric", default=None)
+    parser.add_argument("--n-splits", type=int, default=5)
+    parser.add_argument("--test-size", type=float, default=0.3)
+    parser.add_argument("--gap", type=int, default=0)
+    parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--sheet", default=None)
+    parser.add_argument("--comment", default=None)
+    args = parser.parse_args()
+
+    df = io_router.load_dataframe(args.input_path, auto_sample=False, sheet=args.sheet, comment=args.comment)
+    plan = load_json(args.split_plan) if args.split_plan else None
+    if plan and plan.get("data_hash") and plan["data_hash"] != file_sha256(args.input_path):
+        print("warning: split_plan data_hash differs from input; indices may not align")
+    model_names = [m.strip() for m in args.models.split(",") if m.strip()] if args.models else None
+    report = run_baseline(
+        df, args.target, args.task, time_col=args.time_col, group_col=args.group_col,
+        split_plan=plan, model_names=model_names, max_level=args.max_level,
+        primary_metric=args.primary_metric, n_splits=args.n_splits,
+        test_size=args.test_size, gap=args.gap, seed=args.seed,
     )
+    report["source"] = str(Path(args.input_path).resolve())
+    report["data_hash"] = file_sha256(args.input_path)
+    write_json(args.output_path, report)
+    print(f"wrote {args.output_path}: best={report['best_model_name']} "
+          f"{report['primary_metric']}={report['models'][0]['mean_metrics'].get(report['primary_metric'])}")
+    return 0
 
 
-def collect_binary_classification_oof_scores(
-    df: pd.DataFrame,
-    target: str,
-    spec: ModelSpec,
-    weight_col: str | None = None,
-    n_splits: int = 5,
-    heartbeat=None,
-) -> dict[str, Any]:
-    target_series = df[target]
-    if target_series.nunique(dropna=True) != 2:
-        raise ValueError("Threshold review currently requires a binary target.")
-    features = df.drop(columns=[target] + ([weight_col] if weight_col else []))
-    sample_weight = df[weight_col] if weight_col else None
-    splits = _classification_splits(target_series, n_splits, sample_weight=sample_weight)
-    oof_scores = pd.Series(index=features.index, dtype=float)
-    oof_true = pd.Series(index=features.index, dtype=target_series.dtype)
-    for fold_index, (train_index, test_index) in enumerate(splits, start=1):
-        if heartbeat:
-            heartbeat(f"scoring {spec.name} fold {fold_index}")
-        preprocessor = _build_preprocessor(features)
-        estimator = spec.builder()
-        pipeline = Pipeline([("preprocessor", preprocessor), ("model", estimator)])
-        x_train = features.iloc[train_index]
-        x_test = features.iloc[test_index]
-        y_train = target_series.iloc[train_index]
-        y_test = target_series.iloc[test_index]
-        train_weight = sample_weight.iloc[train_index] if sample_weight is not None else None
-        _fit_pipeline(pipeline, x_train, y_train, estimator, train_weight)
-        scores = _classification_scores(pipeline, x_test)
-        if scores is None:
-            raise ValueError(f"Model `{spec.name}` does not expose classification scores for threshold review.")
-        oof_scores.iloc[test_index] = scores.to_numpy()
-        oof_true.iloc[test_index] = y_test.to_numpy()
-    positive_label = _positive_label(target_series)
-    negative_candidates = [label for label in sorted(target_series.dropna().unique()) if label != positive_label]
-    negative_label = negative_candidates[0]
-    default_predictions = pd.Series(
-        [positive_label if score >= 0.5 else negative_label for score in oof_scores],
-        index=oof_scores.index,
-    )
-    return {
-        "positive_label": positive_label,
-        "negative_label": negative_label,
-        "split_strategy": _classification_split_strategy(target_series, sample_weight),
-        "y_true": oof_true,
-        "scores": oof_scores,
-        "sample_weight": sample_weight,
-        "default_metrics": _classification_metrics(oof_true, default_predictions, oof_scores, sample_weight=sample_weight),
-    }
+if __name__ == "__main__":
+    raise SystemExit(main())

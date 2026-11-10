@@ -1,4 +1,10 @@
 #!/usr/bin/env python3
+"""Cleaning primitives.
+
+This module is deliberately side-effect free: no global registry, no writes to
+the current working directory. The CLI is retained as a thin compatibility
+wrapper; new workflows should call clean.py / features.py.
+"""
 from __future__ import annotations
 
 import argparse
@@ -7,301 +13,179 @@ import sys
 from pathlib import Path
 from typing import Any
 
-import pandas as pd
 import numpy as np
+import pandas as pd
 
-# Add the scripts directory to sys.path so we can import common and io_router
 sys.path.append(str(Path(__file__).parent))
-import common
-import io_router
-from metadata_manager import MetadataManager
+import common  # noqa: E402
+import io_router  # noqa: E402
 
-manager = MetadataManager()
 
-def missing_summary(df) -> dict[str, Any]:
+def missing_summary(df: pd.DataFrame) -> dict[str, Any]:
     counts = df.isna().sum()
     ratios = (counts / len(df)).fillna(0.0) if len(df) else counts
     return {
         "total_missing": int(counts.sum()),
-        "by_column": {col: {"count": int(counts[col]), "pct": float(ratios[col])} 
-                      for col in df.columns if counts[col] > 0}
+        "by_column": {
+            str(col): {"count": int(counts[col]), "pct": float(ratios[col])}
+            for col in df.columns if counts[col] > 0
+        },
     }
+
 
 def _normalize_subset(df: pd.DataFrame, subset: list[str] | None) -> tuple[list[str] | None, list[str]]:
-    if not subset:
+    if subset is None:
         return None, []
-    valid = [col for col in subset if col in df.columns]
-    missing = [col for col in subset if col not in df.columns]
-    return (valid or None), missing
+    present = [c for c in subset if c in df.columns]
+    missing = [c for c in subset if c not in df.columns]
+    return (present or None), missing
 
-def _duplicate_examples(df: pd.DataFrame, subset: list[str], top_n: int = 5) -> list[dict[str, Any]]:
-    if df.empty or not subset:
-        return []
-    duplicate_mask = df.duplicated(subset=subset, keep=False)
-    if not duplicate_mask.any():
-        return []
 
-    grouped = (
-        df.loc[duplicate_mask, subset]
-        .value_counts(dropna=False)
-        .head(top_n)
-    )
-    examples: list[dict[str, Any]] = []
-    for values, count in grouped.items():
-        if not isinstance(values, tuple):
-            values = (values,)
-        examples.append({
-            "key": {column: (None if pd.isna(value) else str(value)) for column, value in zip(subset, values)},
-            "count": int(count),
-        })
-    return examples
-
-def duplicate_summary(
-    df: pd.DataFrame,
-    key_columns: list[str] | None = None,
-    top_n: int = 5,
-) -> dict[str, Any]:
-    dup_count = int(df.duplicated().sum())
-    summary: dict[str, Any] = {
-        "count": dup_count,
-        "pct": float(dup_count / len(df)) if len(df) else 0.0,
-        "exact_row_duplicates": {
-            "count": dup_count,
-            "pct": float(dup_count / len(df)) if len(df) else 0.0,
-        },
-        "warning": (
-            "Exact duplicate rows may still be valid repeated observations. "
-            "Confirm row grain and business keys before removing duplicates."
-        ),
+def duplicate_summary(df: pd.DataFrame, key_columns: list[str] | None = None, top_n: int = 5) -> dict[str, Any]:
+    subset, missing = _normalize_subset(df, key_columns)
+    duplicates = df.duplicated(subset=subset, keep=False)
+    groups = int(df.loc[duplicates].groupby(subset, dropna=False).ngroups) if subset and duplicates.any() else int(duplicates.sum())
+    return {
+        "key_columns": subset,
+        "missing_key_columns": missing,
+        "rows_in_duplicate_groups": int(duplicates.sum()),
+        "duplicate_groups": int(groups),
+        "extra_rows": int(df.duplicated(subset=subset).sum()),
+        "pct_rows_in_duplicate_groups": float(duplicates.mean()) if len(df) else 0.0,
+        "examples": df.loc[duplicates].head(top_n).to_dict(orient="records"),
     }
 
-    normalized_keys, missing_keys = _normalize_subset(df, key_columns)
-    if key_columns:
-        summary["key_columns_requested"] = key_columns
-    if missing_keys:
-        summary["missing_key_columns"] = missing_keys
-    if normalized_keys:
-        key_duplicate_mask = df.duplicated(subset=normalized_keys, keep=False)
-        grouped = df.loc[key_duplicate_mask, normalized_keys].value_counts(dropna=False)
-        duplicate_groups = int(grouped.shape[0])
-        rows_in_duplicate_groups = int(grouped.sum()) if duplicate_groups else 0
-        extra_rows = int((grouped - 1).clip(lower=0).sum()) if duplicate_groups else 0
-        summary["key_duplicates"] = {
-            "key_columns": normalized_keys,
-            "groups": duplicate_groups,
-            "rows_in_duplicate_groups": rows_in_duplicate_groups,
-            "extra_rows": extra_rows,
-            "pct_rows_in_duplicate_groups": float(rows_in_duplicate_groups / len(df)) if len(df) else 0.0,
-            "examples": _duplicate_examples(df, normalized_keys, top_n=top_n),
-        }
-    return summary
 
-def _normalize_drop_duplicates_config(config_value: Any) -> dict[str, Any]:
-    if isinstance(config_value, bool):
-        return {"enabled": config_value, "subset": None, "keep": "first"}
-    if isinstance(config_value, dict):
-        keep = config_value.get("keep", "first")
-        if keep not in {"first", "last", False}:
-            keep = "first"
-        return {
-            "enabled": bool(config_value.get("enabled", True)),
-            "subset": config_value.get("subset"),
-            "keep": keep,
-        }
-    return {"enabled": False, "subset": None, "keep": "first"}
-
-def encode_categoricals(df, columns: list[str] | None = None, dummy_na: bool = True):
+def encode_categoricals(df: pd.DataFrame, columns: list[str] | None = None, dummy_na: bool = True) -> pd.DataFrame:
     frame = df.copy()
     target_cols = columns or list(frame.select_dtypes(exclude=["number", "bool"]).columns)
-    if not target_cols: return frame
+    target_cols = [c for c in target_cols if c in frame.columns and not pd.api.types.is_datetime64_any_dtype(frame[c])]
+    if not target_cols:
+        return frame
     frame[target_cols] = frame[target_cols].fillna("__MISSING__").astype("string")
-    result = pd.get_dummies(frame, columns=target_cols, dummy_na=dummy_na)
-    
-    # Register Lineage for Categorical Encoding
-    for col in target_cols:
-        derived = [c for c in result.columns if c.startswith(f"{col}_")]
-        for d in derived:
-            manager.register_lineage(
-                target=d,
-                sources=[col],
-                operation="one_hot_encoding",
-                reason=f"Derived from categorical feature '{col}'"
-            )
-    return result
+    return pd.get_dummies(frame, columns=target_cols, dummy_na=dummy_na)
 
-def add_calendar_features(df, time_col: str):
-    if time_col not in df.columns: return df
+
+def add_calendar_features(df: pd.DataFrame, time_col: str) -> pd.DataFrame:
+    if time_col not in df.columns:
+        return df
     frame = df.copy()
     t = pd.to_datetime(frame[time_col], errors="coerce")
-    
-    new_cols = {
-        f"{time_col}_year": t.dt.year,
-        f"{time_col}_month": t.dt.month,
-        f"{time_col}_day": t.dt.day,
-        f"{time_col}_dow": t.dt.dayofweek
-    }
-    
-    for name, series in new_cols.items():
-        frame[name] = series
-        # Register Lineage for Calendar Features
-        manager.register_lineage(
-            target=name,
-            sources=[time_col],
-            operation="calendar_extraction",
-            reason=f"Extracted from time column '{time_col}'"
-        )
+    frame[f"{time_col}_year"] = t.dt.year
+    frame[f"{time_col}_month"] = t.dt.month
+    frame[f"{time_col}_day"] = t.dt.day
+    frame[f"{time_col}_dow"] = t.dt.dayofweek
     return frame
 
-def apply_cleaning(df, config: dict[str, Any]) -> tuple[pd.DataFrame, dict[str, Any]]:
+
+def apply_cleaning(df: pd.DataFrame, config: dict[str, Any]) -> tuple[pd.DataFrame, dict[str, Any]]:
     frame = df.copy()
-    report = {"actions": []}
-    
-    # Simple Missing Value Strategy
-    if "missing" in config:
-        strat = config["missing"].get("strategy", "drop")
-        cols = config["missing"].get("columns", list(frame.columns))
-        if strat == "drop":
+    report: dict[str, Any] = {"actions": [], "initial_rows": int(len(frame))}
+
+    missing = config.get("missing", {})
+    if missing:
+        strategy = missing.get("strategy", "drop")
+        columns = [c for c in missing.get("columns", list(frame.columns)) if c in frame.columns]
+        if strategy == "drop" and columns:
             before = len(frame)
-            frame = frame.dropna(subset=cols)
-            report["actions"].append(f"Dropped {before - len(frame)} rows with missing values")
-            # Register Lineage for Row Dropping
-            manager.register_lineage(
-                target="dataset",
-                sources=cols,
-                operation="missing_value_drop",
-                reason=f"Dropped {before - len(frame)} rows due to nulls in {cols}"
-            )
-        elif strat in ["mean", "median", "mode"]:
-            for col in cols:
-                if col in frame.columns:
-                    val = getattr(frame[col], strat)()
-                    if isinstance(val, pd.Series): val = val.iloc[0]
-                    frame[col] = frame[col].fillna(val)
-                    # Register Lineage for Imputation
-                    manager.register_lineage(
-                        target=col,
-                        sources=[col],
-                        operation=f"imputation_{strat}",
-                        reason=f"Filled missing values with column {strat}: {val}"
-                    )
-            report["actions"].append(f"Filled missing in {cols} with {strat}")
+            frame = frame.dropna(subset=columns)
+            report["actions"].append(f"dropped {before - len(frame)} rows with missing values in {columns}")
+        elif strategy in {"mean", "median", "mode"}:
+            for col in columns:
+                if frame[col].isna().any():
+                    if strategy == "mode":
+                        mode = frame[col].mode(dropna=True)
+                        value = mode.iloc[0] if not mode.empty else None
+                    else:
+                        value = getattr(frame[col], strategy)()
+                    if value is not None and not (isinstance(value, float) and np.isnan(value)):
+                        frame[col] = frame[col].fillna(value)
+            report["actions"].append(f"filled missing values in {columns} with {strategy}")
 
-    dedupe_config = _normalize_drop_duplicates_config(config.get("drop_duplicates"))
-    if dedupe_config["enabled"]:
+    dedupe = config.get("drop_duplicates")
+    if isinstance(dedupe, bool):
+        dedupe = {"enabled": dedupe}
+    if isinstance(dedupe, dict) and dedupe.get("enabled", True):
+        subset, _ = _normalize_subset(frame, dedupe.get("subset"))
+        keep = dedupe.get("keep", "first")
+        if keep not in {"first", "last", False}:
+            keep = "first"
         before = len(frame)
-        subset, missing_subset = _normalize_subset(frame, dedupe_config["subset"])
-        frame = frame.drop_duplicates(subset=subset, keep=dedupe_config["keep"])
-        removed = before - len(frame)
-        
-        # Register Lineage for Deduplication
-        if removed > 0:
-            manager.register_lineage(
-                target="dataset", 
-                sources=list(frame.columns), 
-                operation="drop_duplicates", 
-                reason=f"Removed {removed} duplicates (keep={dedupe_config['keep']})"
-            )
+        frame = frame.drop_duplicates(subset=subset, keep=keep)
+        report["dedupe"] = {"removed_rows": before - len(frame), "subset": subset, "keep": keep}
+        report["actions"].append(f"removed {before - len(frame)} duplicate rows")
 
-        dedupe_report: dict[str, Any] = {
-            "removed_rows": removed,
-            "keep": dedupe_config["keep"],
-            "subset": subset,
-        }
-        if missing_subset:
-            dedupe_report["missing_subset_columns"] = missing_subset
-        report["dedupe"] = dedupe_report
-        if subset:
-            report["actions"].append(
-                f"Removed {removed} duplicate rows based on columns {subset} (keep={dedupe_config['keep']})"
-            )
+    capping = config.get("outlier_capping", {})
+    capped = []
+    for col, params in (capping.get("columns", {}) if isinstance(capping, dict) else {}).items():
+        if col not in frame.columns or not pd.api.types.is_numeric_dtype(frame[col]):
+            continue
+        method = params.get("method", "quantile")
+        if method == "quantile":
+            lower = frame[col].quantile(params.get("lower", 0.0))
+            upper = frame[col].quantile(params.get("upper", 1.0))
         else:
-            report["actions"].append(
-                f"Removed {removed} exact duplicate rows across all columns (keep={dedupe_config['keep']})"
-            )
+            lower = params.get("lower", -np.inf)
+            upper = params.get("upper", np.inf)
+        frame[col] = frame[col].clip(lower=lower, upper=upper)
+        capped.append(f"{col}:[{lower}, {upper}]")
+    if capped:
+        report["actions"].append("capped outliers: " + ", ".join(capped))
 
-    # Outlier Capping
-    if "outlier_capping" in config:
-        cap_config = config["outlier_capping"]
-        target_cols = cap_config.get("columns", {})
-        capped_info = []
-        for col, params in target_cols.items():
-            if col not in frame.columns:
-                continue
-            
-            method = params.get("method", "quantile")
-            if method == "quantile":
-                upper_q = params.get("upper", 1.0)
-                lower_q = params.get("lower", 0.0)
-                upper_val = frame[col].quantile(upper_q)
-                lower_val = frame[col].quantile(lower_q)
-            else: # fixed
-                upper_val = params.get("upper", float("inf"))
-                lower_val = params.get("lower", float("-inf"))
-            
-            frame[col] = frame[col].clip(lower=lower_val, upper=upper_val)
-            capped_info.append(f"{col}({method}: {lower_val} to {upper_val})")
-            
-            # Register Lineage for Outlier Capping per column
-            manager.register_lineage(
-                target=col,
-                sources=[col],
-                operation="outlier_capping",
-                reason=f"Applied capping via {method} (lower: {lower_val}, upper: {upper_val})"
-            )
-        
-        if capped_info:
-            report["actions"].append(f"Applied outlier capping to: {', '.join(capped_info)}")
-
+    report["final_rows"] = int(len(frame))
+    report["removed_rows"] = int(report["initial_rows"] - len(frame))
     return frame, report
 
-def build_schema(df, target=None, time_col=None):
+
+def build_schema(df: pd.DataFrame, target: str | None = None, time_col: str | None = None) -> dict[str, Any]:
     fields = []
     for col in df.columns:
-        dtype = str(df[col].dtype)
-        unique = int(df[col].nunique())
-        missing = float(df[col].isna().mean())
         fields.append({
-            "name": col, "label": common.friendly_label(col),
-            "dtype": dtype, "unique": unique, "missing_pct": missing,
-            "role": "target" if col == target else "time" if col == time_col else "feature"
+            "name": str(col),
+            "label": common.friendly_label(str(col)),
+            "dtype": str(df[col].dtype),
+            "unique": int(df[col].nunique(dropna=True)),
+            "missing_pct": float(df[col].isna().mean()),
+            "role": "target" if col == target else "time" if col == time_col else "feature",
         })
     return {"fields": fields, "target": target, "time_col": time_col}
 
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="Compatibility cleaning CLI; prefer clean.py.")
     parser.add_argument("--input-path", required=True)
     parser.add_argument("--target")
     parser.add_argument("--time-col")
     parser.add_argument("--config-json")
-    parser.add_argument("--output-path")
+    parser.add_argument("--output-path", required=True)
+    parser.add_argument("--report-path", default="cleaning_report.json")
     args = parser.parse_args()
 
     config = json.loads(args.config_json) if args.config_json else {}
-    duplicate_check = config.get("duplicate_check", {})
-    duplicate_keys = duplicate_check.get("key_columns") if isinstance(duplicate_check, dict) else None
-
-    df = io_router.load_dataframe(args.input_path)
+    df = io_router.load_dataframe(args.input_path, auto_sample=False)
     report = {
         "initial_stats": {
             "missing": missing_summary(df),
-            "duplicates": duplicate_summary(df, key_columns=duplicate_keys),
-            "schema": build_schema(df, target=args.target, time_col=args.time_col)
+            "duplicates": duplicate_summary(df, key_columns=config.get("duplicate_check", {}).get("key_columns")
+                                            if isinstance(config.get("duplicate_check"), dict) else None),
+            "schema": build_schema(df, target=args.target, time_col=args.time_col),
         }
     }
-    
-    if args.config_json:
-        df, clean_report = apply_cleaning(df, config)
-        report["cleaning"] = clean_report
-        
-        if config.get("encode"):
-            df = encode_categoricals(df)
-            report["encoded"] = True
-            
-        if args.output_path:
-            # Simple save based on extension
-            p = Path(args.output_path)
-            if p.suffix == ".csv": df.to_csv(p, index=False)
-            else: df.to_parquet(p, index=False)
-            report["output_path"] = str(p.resolve())
+    cleaned, clean_report = apply_cleaning(df, config)
+    report["cleaning"] = clean_report
+    if config.get("encode"):
+        cleaned = encode_categoricals(cleaned)
+        report["encoded"] = True
+    p = Path(args.output_path)
+    if p.suffix.lower() == ".csv":
+        cleaned.to_csv(p, index=False)
+    else:
+        cleaned.to_parquet(p, index=False)
+    report["output_path"] = str(p.resolve())
+    common.write_json(args.report_path, report)
+    print(json.dumps({"output_path": str(p.resolve()), "rows": len(cleaned), "report_path": str(Path(args.report_path).resolve())}, ensure_ascii=False))
+    return 0
 
-    print(json.dumps(report, indent=2, ensure_ascii=False))
+
+if __name__ == "__main__":
+    raise SystemExit(main())

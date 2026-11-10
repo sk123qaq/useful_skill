@@ -1,0 +1,70 @@
+{
+  "stage": "gate",
+  "route": "causal",
+  "status": "report_ready",
+  "max_evidence_grade": "report-ready",
+  "gate_results": {
+    "contract": {
+      "status": "pass",
+      "reasons": [],
+      "details": null
+    },
+    "data_quality": {
+      "status": "pass",
+      "reasons": [],
+      "details": {
+        "rows": 445,
+        "source": "/tmp/nsw.csv"
+      }
+    },
+    "feature_risk": {
+      "status": "pass",
+      "reasons": [],
+      "details": {
+        "summary": {
+          "unreviewed": 0,
+          "safe": 9,
+          "hard_leakage": 0,
+          "post_outcome": 0,
+          "soft_proxy": 0,
+          "collection_artifact": 1
+        }
+      }
+    },
+    "split": {
+      "status": "not_applicable",
+      "reasons": [],
+      "details": null
+    },
+    "baseline": {
+      "status": "not_applicable",
+      "reasons": [],
+      "details": null
+    },
+    "causal": {
+      "status": "pass",
+      "reasons": [],
+      "details": null
+    },
+    "experiment": {
+      "status": "not_applicable",
+      "reasons": [],
+      "details": null
+    },
+    "claims": {
+      "status": "pass",
+      "reasons": [],
+      "details": {
+        "n_claims": 1
+      }
+    },
+    "report": {
+      "status": "pass",
+      "reasons": [],
+      "details": null
+    }
+  },
+  "blockers": [],
+  "warnings": [],
+  "created_at": "2026-11-10T04:17:12+00:00"
+}

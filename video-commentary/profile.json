@@ -1,0 +1,12 @@
+{
+  "note": "第六集实测（音色 01 elegantgentle-female）：speed 0.95 由 38 段真实解说的净吐字率中位数 5.54 反推。换音色或换素材后用 narration.py --recalibrate 重新标定，再更新此文件。",
+  "voice": "elegantgentle-female",
+  "instruction": "影视解说旁白，温婉清晰，语速中等",
+  "speed": 0.95,
+  "target_cps": 4.4,
+  "target_artic": 5.35,
+  "max_run": 4.0,
+  "level_mode": "speech",
+  "target_db": -19.6,
+  "gap": 0.45
+}

@@ -4,7 +4,7 @@
 
 这份文档保留的是因果分析的适用边界、方法选择和识别假设。
 
-虽然 `data_analysis_pro` 中存在 `scripts/causal_analysis.py` 与 `scripts/causal_narrative.py`，而且我已修复它们的编译级 import 问题，并已用 BRFSS 样例数据成功跑通一条 `psm` 端到端 smoke test，但这仍不等于整套因果方法都已完成系统化验证。
+当前工作流要求先写 `causal_design.json`（estimand、treatment、outcome、识别假设、调整集），再调用 `scripts/causal_analysis.py`。`causal_analysis.py` 是大套件，不是每个方法都经过同等强度的回归测试；报告里必须写明方法、假设和局限。当前已用公开数据实跑过 PSM 与 DML（见 `references/worked-examples.md`），其余方法仍需按数据逐一核验。
 
 另外，`causal_analysis.py` 中原本依赖的一些可选导出能力，现在已做成缺失时自动降级，不再因此阻塞脚本启动。
 
@@ -14,7 +14,7 @@
 - 配置口径参考
 - 结果解读防护准则
 
-所以它仍然不应被理解成“所有方法都已做过端到端回归验证的因果 runner 说明书”。
+因此它是方法选择与解读指南，不是“所有方法都已验证”的承诺。
 
 ## 什么时候才应该走因果路径
 
@@ -43,7 +43,7 @@
 - `cate`
 - `causal`
 
-这些方法列表有参考价值，但不代表当前都能在本 skill 里稳定跑通。
+这些方法列表有参考价值，但不代表当前都能在本 skill 里稳定跑通。已实跑：PSM（NSW，ATT≈1863，p=.015）、DML（NSW，ATE≈2110，p=.005）。
 
 ---
 
