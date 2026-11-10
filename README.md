@@ -41,7 +41,8 @@ useful_skill/
 
 ## 凭据与配置
 
-需要外部 API 的 skill 一律**只读环境变量或本地 `.env`**，仓库内不含任何真实 key：
+需要外部 API 的 skill 一律**只读环境变量或本地 `.env`**，仓库内不含任何真实 key
+（真实 `.env` 已在源头排除，只提交空值 `.env.example`）：
 
 | Skill | 变量 | 从哪里拿 |
 |---|---|---|
@@ -58,7 +59,8 @@ useful_skill/
 - 每个 skill 自包含：脚本用相对自身目录的路径，不依赖仓库根。
 - 主脚本尽量零第三方依赖；需要重依赖（torch、pdf 工具链等）的 skill 在 `SKILL.md` 里写明安装方式。
 - 大文件不入仓：测试生成的音频、成片、中间产物在 `tests/tmp/`、`outputs/`，已被忽略。
-- `video-commentary/tests/` 保留可重放的回归夹具（`tests/fixture/`），`tests/run.sh` 一键跑。
+- `video-commentary/tests/fixture/` 由 `tests/make_fixture.py` 现生成（含合成素材），不入仓；
+  `sh video-commentary/tests/run.sh` 会先造夹具再跑全链冒烟（不要把它当真实素材检出）。
 
 ## 许可
 
